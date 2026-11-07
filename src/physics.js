@@ -216,7 +216,8 @@ export class World {
         b.x += nx * cb; b.z += nz * cb;
         const rv = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
         if (rv >= 0) continue;
-        const e = Math.min(a.e, b.e);
+        // si una de las dos va llevada con la palma, empuja sin rebote (no "dispara" a la otra)
+        const e = a.drag || b.drag ? 0 : Math.min(a.e, b.e);
         const J = (-(1 + e) * rv) / (ia + ib);
         a.vx -= J * ia * nx; a.vz -= J * ia * nz;
         b.vx += J * ib * nx; b.vz += J * ib * nz;

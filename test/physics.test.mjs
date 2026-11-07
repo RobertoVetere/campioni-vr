@@ -327,3 +327,15 @@ test('palma: la chapa llevada sigue a la mano y conduce el balón pegado sin chu
   for (let t = 0; t < 1; t += 1 / 60) w.step(1 / 60);
   assert.ok(ball.z > -0.05, `no ha salido disparado: ${ball.z}`);
 });
+
+test('palma: empujar otra chapa al arrastrar no la hace salir disparada', () => {
+  const w = new World();
+  const c = w.add(makeBody(KIND.CAP, 0, 0.1, 0));
+  const o = w.add(makeBody(KIND.CAP, 0, 0.1 - 2 * c.r - 0.001, 1));
+  c.drag = { tx: 0, tz: 0.06 }; // 4 cm hacia la otra
+  for (let t = 0; t < 0.4; t += 1 / 60) w.step(1 / 60);
+  c.drag = null; c.vx = c.vz = 0;
+  for (let t = 0; t < 1.5; t += 1 / 60) w.step(1 / 60);
+  // la empujada solo se aparta lo justo (sin arreglo salía a ~1 m/s y acababa en z≈-0.07)
+  assert.ok(o.z > -0.03, `la otra ha salido despedida hasta z=${o.z.toFixed(3)}`);
+});
