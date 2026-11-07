@@ -3,6 +3,7 @@ import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.
 import { World, setupMatch, shoot, MAX_SHOT, FIELD } from './physics.js';
 import { think } from './ai.js';
 import { buildTable, buildCap, buildBall, buildShadow, textPanel, makeButton, TEAMS } from './visuals.js';
+import { buildStadium } from './stadium.js';
 import { initAudio, hitSound, flickSound, goalSound, buttonSound } from './audio.js';
 
 // ---------- Ajustes de juego ----------
@@ -35,7 +36,7 @@ scene.add(sun);
 
 // Habitación sencilla para modo VR / escritorio (en realidad mixta se oculta y ves tu casa)
 const room = new THREE.Group();
-const floor = new THREE.Mesh(new THREE.CircleGeometry(4, 48), new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.9 }));
+const floor = new THREE.Mesh(new THREE.CircleGeometry(4, 48), new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 1, flatShading: true }));
 floor.rotation.x = -Math.PI / 2;
 room.add(floor);
 scene.add(room);
@@ -47,6 +48,8 @@ scene.add(root);
 const table = buildTable();
 root.add(table);
 const cushions = table.userData.cushions;
+const stadium = buildStadium();
+root.add(stadium.group);
 function flashCushion(x, z, speed) {
   let best = null, bd = Infinity;
   for (const c of cushions) {
@@ -70,7 +73,7 @@ function updateCushions(dt) {
 // mesa física (solo en VR/escritorio)
 const tableLegs = new THREE.Group();
 {
-  const wood = new THREE.MeshStandardMaterial({ color: 0x5b3a22, roughness: 0.8 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5b3a22, roughness: 0.9, flatShading: true });
   const top = new THREE.Mesh(new THREE.BoxGeometry(FIELD.W + 0.3, 0.03, FIELD.L + 0.35), wood);
   top.position.y = -0.034;
   tableLegs.add(top);
@@ -274,6 +277,7 @@ function updateGame(dt) {
       const s = world.goal.scorer;
       score[s]++;
       goalSound();
+      stadium.cheer(s);
       confetti.burst(s === 0 ? -FIELD.L / 2 : FIELD.L / 2, s);
       say(s === 0 ? '¡GOOOOL!' : 'Gol del rival…');
       state = 'goal';
@@ -580,6 +584,7 @@ renderer.setAnimationLoop((t) => {
   syncMeshes(dt);
   confetti.update(dt);
   updateCushions(dt);
+  stadium.update(dt, t / 1000);
   // aros de "te toca"
   const pulse = 0.35 + 0.25 * Math.sin(t / 250);
   world.bodies.forEach((b, i) => {

@@ -113,3 +113,11 @@ test('partida simulada de 60 turnos: el garbanzo nunca sale de la mesa', () => {
     if (w.goal) { const c = 1 - w.goal.scorer; P.setupMatch(w, c); turn = c; } else turn = 1 - turn;
   }
 });
+
+test('la CPU no saca al portero cuando el garbanzo está lejos de su portería', () => {
+  for (let k = 0; k < 5; k++) {
+    const w = setupMatch(new World(), 1);
+    const shot = thinkSync(w, 1, { noise: 0.07 });
+    assert.notEqual(w.bodies[shot.body].kind, KIND.KEEPER);
+  }
+});

@@ -10,7 +10,10 @@ function candidates(world, team) {
   const dir = team === 1 ? 1 : -1; // hacia dónde ataca
   const goalZ = dir * (world.f.L / 2 + 0.02);
   const out = [];
-  const mine = world.bodies.filter((b) => b.team === team);
+  const ownGoalZ = -dir * (world.f.L / 2);
+  const ballNearHome = Math.abs(ball.z - ownGoalZ) < 0.2;
+  // el portero solo sale si el garbanzo está cerca de casa
+  const mine = world.bodies.filter((b) => b.team === team && (b.kind !== KIND.KEEPER || ballNearHome));
   for (const c of mine) {
     // punto "de billar": detrás del garbanzo según la línea garbanzo→portería
     const gx = 0 - ball.x, gz = goalZ - ball.z;

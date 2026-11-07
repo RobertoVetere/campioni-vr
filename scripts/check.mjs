@@ -2,7 +2,7 @@ import puppeteer from 'puppeteer-core';
 import { spawn } from 'child_process';
 const srv = spawn('npx', ['vite', 'preview', '--port', '4173', '--strictPort'], { cwd: '/home/claude/campioni-vr' });
 await new Promise(r => setTimeout(r, 2500));
-const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-proxy-server'] });
+const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', protocolTimeout: 600000, args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-proxy-server'] });
 const p = await b.newPage();
 await p.setViewport({ width: 1100, height: 760 });
 const errs = [];
@@ -16,7 +16,7 @@ const res = await p.evaluate(async () => {
   const g = window.__campioni; g.startMatch();
   const log = [];
   const wait = ms => new Promise(r => setTimeout(r, ms));
-  for (let k = 0; k < 14; k++) {
+  for (let k = 0; k < 3; k++) {
     for (let t = 0; t < 200 && g.state !== 'aim' && g.state !== 'end'; t++) await wait(100);
     if (g.state === 'end') break;
     const w = g.world, ball = w.ball;

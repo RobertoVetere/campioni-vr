@@ -26,16 +26,9 @@ function fieldTexture() {
   return canvasTex(Math.round(W * px), Math.round(L * px), (g, w, h) => {
     // tapete con franjas de césped
     for (let i = 0; i < 10; i++) {
-      g.fillStyle = i % 2 ? '#2f8a3e' : '#2a7f38';
+      g.fillStyle = i % 2 ? '#3fa34d' : '#36924a';
       g.fillRect(0, (i * h) / 10, w, h / 10 + 1);
     }
-    // grano de fieltro
-    const img = g.getImageData(0, 0, w, h);
-    for (let i = 0; i < img.data.length; i += 4) {
-      const n = (Math.random() - 0.5) * 14;
-      img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
-    }
-    g.putImageData(img, 0, 0);
     g.strokeStyle = 'rgba(255,255,255,0.9)';
     g.lineWidth = 0.004 * px;
     const m = 0.012 * px;
@@ -62,17 +55,17 @@ export function buildTable() {
   const g = new THREE.Group();
   const felt = new THREE.Mesh(
     new THREE.PlaneGeometry(W, L),
-    new THREE.MeshStandardMaterial({ map: fieldTexture(), roughness: 0.95 })
+    new THREE.MeshStandardMaterial({ map: fieldTexture(), roughness: 1 })
   );
   felt.rotation.x = -Math.PI / 2;
   g.add(felt);
   // tablero de madera debajo
-  const wood = new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: 0.7 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: 0.9, flatShading: true });
   const board = new THREE.Mesh(new THREE.BoxGeometry(W + 0.06, 0.018, L + 0.06 + goalD * 2), wood);
   board.position.y = -0.0095;
   g.add(board);
   // bandas
-  const rail = new THREE.MeshStandardMaterial({ color: 0x6b3f1f, roughness: 0.6 });
+  const rail = new THREE.MeshStandardMaterial({ color: 0x6b3f1f, roughness: 0.9, flatShading: true });
   const rh = 0.016, rt = 0.012;
   const addBox = (w, d, x, z, mat = rail, h = rh) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -89,7 +82,7 @@ export function buildTable() {
   const ct = 0.006, ch = 0.011;
   const addCushion = (x1, z1, x2, z2) => {
     const len = Math.hypot(x2 - x1, z2 - z1);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xf2a516, roughness: 0.45, emissive: 0xffd36b, emissiveIntensity: 0 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xf2a516, roughness: 0.7, flatShading: true, emissive: 0xffd36b, emissiveIntensity: 0 });
     const m = new THREE.Mesh(new THREE.BoxGeometry(x1 === x2 ? ct : len, ch, x1 === x2 ? len : ct), mat);
     // un poco hacia fuera del campo para que la cara de la goma coincida con la línea de choque
     const ox = x1 === x2 ? Math.sign(x1) * ct / 2 : 0;
@@ -166,35 +159,35 @@ function shirtTexture(team, num, keeper) {
   });
 }
 
-function crimpedSide(r, h, teeth = 21) {
+function crimpedSide(r, h, teeth = 11) {
   const geo = new THREE.CylinderGeometry(r, r * 1.04, h, teeth * 2, 1, true);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     const a = Math.atan2(z, x);
-    const k = 1 + 0.07 * Math.cos(a * teeth);
+    const k = 1 + 0.09 * Math.cos(a * teeth);
     pos.setX(i, x * k); pos.setZ(i, z * k);
   }
   geo.computeVertexNormals();
   return geo;
 }
 
-const metal = new THREE.MeshStandardMaterial({ color: 0xd9d9d9, metalness: 0.9, roughness: 0.3 });
+const metal = new THREE.MeshStandardMaterial({ color: 0xc9ced6, metalness: 0.6, roughness: 0.45, flatShading: true });
 
 export function buildCap(body) {
   const g = new THREE.Group();
   const r = body.r;
   if (body.kind === 'keeper') {
     // dos tapones grandes apilados, envueltos en celo
-    const tape = new THREE.MeshStandardMaterial({ color: 0xf4f1e6, roughness: 0.15, metalness: 0, transparent: true, opacity: 0.92 });
-    const side = new THREE.Mesh(new THREE.CylinderGeometry(r, r, KEEPER_H, 32), tape);
+    const tape = new THREE.MeshStandardMaterial({ color: 0xf4f1e6, roughness: 0.4, flatShading: true });
+    const side = new THREE.Mesh(new THREE.CylinderGeometry(r, r, KEEPER_H, 10), tape);
     side.position.y = KEEPER_H / 2;
     g.add(side);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.0, 0.0012, 6, 32), new THREE.MeshStandardMaterial({ color: TEAMS[body.team].keeper }));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.0, 0.0012, 4, 10), new THREE.MeshStandardMaterial({ color: TEAMS[body.team].keeper }));
     ring.rotation.x = Math.PI / 2;
     ring.position.y = KEEPER_H / 2;
     g.add(ring);
-    const top = new THREE.Mesh(new THREE.CircleGeometry(r * 0.97, 32), new THREE.MeshStandardMaterial({ map: shirtTexture(body.team, body.num, true), roughness: 0.5 }));
+    const top = new THREE.Mesh(new THREE.CircleGeometry(r * 0.97, 10), new THREE.MeshStandardMaterial({ map: shirtTexture(body.team, body.num, true), roughness: 0.5 }));
     top.rotation.x = -Math.PI / 2;
     top.position.y = KEEPER_H + 0.0002;
     g.add(top);
@@ -203,11 +196,11 @@ export function buildCap(body) {
     const side = new THREE.Mesh(crimpedSide(r, CAP_H), metal);
     side.position.y = CAP_H / 2;
     g.add(side);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(r * 0.96, 0.0009, 6, 32), metal);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(r * 0.96, 0.0009, 4, 22), metal);
     rim.rotation.x = Math.PI / 2;
     rim.position.y = CAP_H;
     g.add(rim);
-    const top = new THREE.Mesh(new THREE.CircleGeometry(r * 0.95, 32), new THREE.MeshStandardMaterial({ map: shirtTexture(body.team, body.num, false), roughness: 0.6 }));
+    const top = new THREE.Mesh(new THREE.CircleGeometry(r * 0.95, 22), new THREE.MeshStandardMaterial({ map: shirtTexture(body.team, body.num, false), roughness: 0.6 }));
     top.rotation.x = -Math.PI / 2;
     top.position.y = CAP_H + 0.0001;
     g.add(top);
@@ -226,17 +219,17 @@ export function buildCap(body) {
 }
 
 export function buildBall(body) {
-  const geo = new THREE.SphereGeometry(body.r, 18, 14);
+  // garbanzo low poly: icosaedro facetado algo achatado, con su "pico"
+  const geo = new THREE.IcosahedronGeometry(body.r, 1);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-    // garbanzo: algo irregular y con "pico"
-    let k = 1 + 0.06 * Math.sin(x * 900) * Math.cos(z * 700) + 0.04 * Math.sin(y * 1300);
-    if (x > body.r * 0.6 && y > 0) k += 0.18 * (x / body.r - 0.6);
-    pos.setXYZ(i, x * k, y * k * 0.95, z * k);
+    let k = 1 + 0.05 * Math.sin(x * 1500 + z * 900);
+    if (x > body.r * 0.5 && y > 0) k += 0.22 * (x / body.r - 0.5);
+    pos.setXYZ(i, x * k, y * k * 0.92, z * k);
   }
   geo.computeVertexNormals();
-  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xd8b072, roughness: 0.75 }));
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xe0b878, roughness: 0.8, flatShading: true }));
   m.position.y = body.r;
   const g = new THREE.Group();
   g.add(m);
