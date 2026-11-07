@@ -29,7 +29,7 @@ const MOVE_LIMIT = 0.05; // con la palma, cada chapa se mueve como mucho esto de
 const PALM_HEIGHT = 0.07; // la palma tiene que ir a ras de mesa (como mucho a esta altura)
 
 // ---------- Opciones (se recuerdan en este navegador) ----------
-const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal', surface: 'tapete', keeper: 'manual' };
+const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal', surface: 'tapete', keeper: 'manual', shootHand: 'right' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('campioni') || '{}')); } catch (e) { /* sin almacenamiento */ }
 function saveSettings() { try { localStorage.setItem('campioni', JSON.stringify(settings)); } catch (e) { /* nada */ } }
 
@@ -316,8 +316,8 @@ menu.rotation.x = -0.12;
 menu.visible = false;
 root.add(menu);
 {
-  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.48), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false }));
-  bg.position.y = -0.09;
+  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.525), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false }));
+  bg.position.y = -0.113;
   bg.position.z = -0.003;
   menu.add(bg);
 }
@@ -350,7 +350,8 @@ menuItem(6, () => `Fuerza del dedo: ${settings.finger.toUpperCase()}`, () => { c
 const surfKeys = Object.keys(SURFACES);
 menuItem(7, () => `Campo: ${SURFACES[settings.surface].name}`, () => { setSurface(surfKeys[(surfKeys.indexOf(settings.surface) + 1) % surfKeys.length]); saveSettings(); });
 menuItem(8, () => `Tu portero: ${settings.keeper === 'auto' ? 'AUTOMÁTICO' : 'PALANCA'}`, () => { settings.keeper = settings.keeper === 'auto' ? 'manual' : 'auto'; applyKeeperMode(); saveSettings(); });
-menuItem(9, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
+menuItem(9, () => `Mano de tiro: ${settings.shootHand === 'right' ? 'DERECHA' : 'IZQUIERDA'}`, () => { settings.shootHand = settings.shootHand === 'right' ? 'left' : 'right'; saveSettings(); });
+menuItem(10, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
 function openMenu() { menuOpen = true; menu.visible = true; aim.visible = false; for (const it of menuItems) it.userData.relabel(); }
 function closeMenu() { menuOpen = false; menu.visible = false; }
 function exitGame() {
@@ -591,7 +592,8 @@ function nextTouch() {
   if (turn === 0) {
     state = 'aim';
     if (!selected || selected.team !== 0) autoSelect();
-    say(touchesLeft > 1 ? 'Dale con el dedo · toca un piloto para cambiar de chapa' : (lastFlick ? `¡Ahora tira! · ${lastFlick}` : '¡Ahora tira! (o cambia de chapa con su piloto)'));
+    const hint = settings.shootHand === 'right' ? 'Izq.: mueve y elige · Der.: dispara' : 'Der.: mueve y elige · Izq.: dispara';
+    say(touchesLeft > 1 ? hint : (lastFlick ? `¡Ahora tira! · ${lastFlick}` : `¡Ahora tira! · ${hint}`));
   } else {
     // el rival juega rápido; mientras piensa puedes colocar tu defensa con la palma
     state = 'cpu'; timer = 0.35; cpuPrep = false; cpuGen = null; cpuShot = null;
@@ -767,8 +769,15 @@ const hands = [0, 1].map((i) => {
   const tipBall = new THREE.Mesh(new THREE.SphereGeometry(0.006, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
   tipBall.visible = false;
   scene.add(tipBall);
-  return { hand, tipBall, hist: { 'index-finger-tip': [], 'middle-finger-tip': [] }, pinching: false, sling: null, cooldown: 0 };
+  const h = { hand, tipBall, hist: { 'index-finger-tip': [], 'middle-finger-tip': [] }, pinching: false, sling: null, cooldown: 0, side: null };
+  hand.addEventListener('connected', (e) => { h.side = e.data?.handedness || null; });
+  hand.addEventListener('disconnected', () => { h.side = null; });
+  return h;
 });
+// Reparto de manos: una dispara (por defecto la derecha); la otra mueve chapas y elige.
+// Si el visor no dice qué mano es, las dos hacen de todo.
+const isShooter = (h) => !h.side || h.side === settings.shootHand;
+const isMover = (h) => !h.side || h.side !== settings.shootHand;
 // Mandos (opcional): la empuñadura hace de dedo y el gatillo de pellizco
 const pads = [0, 1].map((i) => {
   const grip = renderer.xr.getControllerGrip(i);
@@ -834,12 +843,7 @@ function segDist(ax, az, bx, bz, px, pz) {
 function tryFlick(p, vel, prev, capH = 0.06) {
   if (!vel || p.y > capH || p.y < -0.05) return false;
   const s = Math.hypot(vel.vx, vel.vz);
-  if (s < FLICK_MIN) {
-    // dedo posado despacio sobre otra chapa: la elige, sin moverla
-    const t = myCapNear(p.x, p.z, 0.003);
-    if (t && t !== selected && t.kind === 'cap') select(t);
-    return false;
-  }
+  if (s < FLICK_MIN) return false;
   const a = prev || p;
   let b = null, bd = Infinity;
   for (const c of world.bodies) {
@@ -849,8 +853,8 @@ function tryFlick(p, vel, prev, capH = 0.06) {
     if (d < 0.016 && d < bd) { bd = d; b = c; }
   }
   if (!b) return false;
-  // la elegida se mueve con cualquier toque; otra chapa solo con un toque claro (así no se mueven sin querer)
-  if (b !== selected) { if (s < FLICK_MIN * 1.8) return false; select(b); }
+  // solo se dispara la chapa elegida (se elige con la otra mano)
+  if (b !== selected) return false;
   // el dedo tiene que ir hacia la chapa (no alejarse de ella)
   if ((b.x - vel.old.x) * vel.vx + (b.z - vel.old.z) * vel.vz <= 0) return false;
   // dirección: mezcla de hacia dónde va el dedo y la línea dedo→centro de la chapa (por dónde golpea)
@@ -870,7 +874,7 @@ function slingUpdate(holder, pinchOn, p) {
   // pellizcar cerca de una chapa, estirar hacia atrás y soltar
   if (!holder.sling && pinchOn && p && p.y < 0.07) {
     const b = myCapNear(p.x, p.z, 0.025);
-    if (b) { select(b); holder.sling = { b, y0: p.y }; }
+    if (b && (b === selected || holder === mouse)) { select(b); holder.sling = { b, y0: p.y }; }
   }
   if (holder.sling) {
     const b = holder.sling.b;
@@ -923,16 +927,37 @@ function pokeButtons(p, now) {
 // ---------- Palanca del portero ----------
 const myKeeper = () => world.bodies.find((b) => b.kin && b.team === 0);
 function gripPos(k) { return new THREE.Vector3(k.x, 0.014, k.homeZ + 0.155); }
-function leverUpdate(h, closed, opened, pts) {
+// Agarre: se mide cuánto están doblados los dedos (como al coger un mango), no un puño perfecto.
+function fingerCurl(hand) {
+  let curled = 0, straight = 0;
+  for (const f of ['index-finger', 'middle-finger', 'ring-finger']) {
+    const tip = jointLocal(hand, `${f}-tip`, new THREE.Vector3());
+    const base = jointLocal(hand, `${f}-metacarpal`, new THREE.Vector3());
+    if (!tip || !base) continue;
+    const d = tip.distanceTo(base);
+    if (d < 0.068) curled++;
+    if (d > 0.088) straight++;
+  }
+  return { curled, straight };
+}
+let leverHover = false;
+function leverUpdate(h, grabbing, released, pts) {
   const k = myKeeper();
   if (!k || menuOpen) { h.lever = false; return false; }
   const g = gripPos(k);
-  const near = pts.some((p) => p && p.distanceTo(g) < 0.055);
-  if (!h.lever && closed && near) { h.lever = true; buttonSound(); }
-  // se suelta solo al abrir la mano del todo (o si te alejas mucho): así no se cae a mitad de parada
-  if (h.lever && (opened || !pts.some((p) => p && p.distanceTo(g) < 0.14))) { h.lever = false; applyKeeperMode(); }
-  const handPt = pts.find((p) => p) || g;
-  if (h.lever) { k.auto = false; k.tx = Math.max(-KEEPER.range, Math.min(KEEPER.range, handPt.x)); }
+  const dist = Math.min(...pts.filter(Boolean).map((p) => p.distanceTo(g)));
+  if (dist < 0.08) leverHover = true;
+  if (!h.lever && grabbing && dist < 0.06) {
+    h.lever = true; buttonSound();
+    // el portero sigue el movimiento de la mano desde donde estaba (sin saltar hacia ella)
+    h.leverOff = k.x - pts.find(Boolean).x;
+  }
+  // se suelta al abrir la mano (o si te alejas mucho): así no se cae a mitad de parada
+  if (h.lever && (released || dist > 0.15)) { h.lever = false; applyKeeperMode(); }
+  if (h.lever) {
+    k.auto = false;
+    k.tx = Math.max(-KEEPER.range, Math.min(KEEPER.range, pts.find(Boolean).x + h.leverOff));
+  }
   return h.lever;
 }
 
@@ -944,7 +969,19 @@ const limitRings = [0, 1].map(() => {
   return r;
 });
 function releaseDrag(h) {
-  if (h.drag) { h.drag.vx = 0; h.drag.vz = 0; h.drag = null; }
+  if (h.drag) {
+    const b = h.drag;
+    b.vx = 0; b.vz = 0;
+    // sin balón: puedes moverla todas las veces que quieras (cada arrastre, hasta 5 cm desde donde quedó).
+    // La que lleva el balón pegado mantiene el límite del turno (si no, se conduciría por todo el campo).
+    if (world.owner !== b) { b.ax = b.x; b.az = b.z; }
+    h.drag = null;
+  }
+}
+function selectByTouch(tip) {
+  if (tip.y > 0.04 || tip.y < -0.05) return;
+  const t = myCapNear(tip.x, tip.z, 0.004);
+  if (t && t !== selected && t.kind === 'cap') select(t);
 }
 function palmUpdate(h, i, open, palm, dt) {
   const can = open && palm && palm.y < PALM_HEIGHT && palm.y > -0.06 && !menuOpen && (state === 'aim' || state === 'cpu');
@@ -996,9 +1033,17 @@ function updateXRInput(now, dt) {
 
     pokeButtons(tip, now);
     // la palanca tiene prioridad: si la tienes agarrada, esa mano no hace otra cosa
-    if (leverUpdate(h, h.pinching || fist, wideOpen, [knuckle, palm, pinchPt, tip])) { releaseDrag(h); limitRings[hi].visible = false; return; }
-    if (palmUpdate(h, hi, open, palm, dt)) return;
-    if (state === 'aim') pokePilots(tip);
+    const curl = fingerCurl(h.hand);
+    const grabbing = h.pinching || fist || curl.curled >= 2;
+    const released = wideOpen || curl.straight >= 3;
+    const handCenter = jointLocal(h.hand, 'middle-finger-metacarpal', new THREE.Vector3());
+    if (leverUpdate(h, grabbing, released, [handCenter, knuckle, palm, pinchPt])) { releaseDrag(h); limitRings[hi].visible = false; return; }
+    // mano que mueve: palma para arrastrar, dedo para elegir (nunca dispara)
+    if (isMover(h)) {
+      if (palmUpdate(h, hi, open, palm, dt)) return;
+      if (state === 'aim') { pokePilots(tip); selectByTouch(tip); }
+    }
+    if (!isShooter(h)) { pushHist(h.hist['index-finger-tip'], now, tip); return; }
     if (state === 'aim') slingUpdate(h, h.pinching, pinchPt);
 
     for (const name of ['index-finger-tip', 'middle-finger-tip']) {
@@ -1157,12 +1202,23 @@ renderer.setAnimationLoop((t) => {
   const now = performance.now();
   if (renderer.xr.isPresenting) {
     if (placeRequested) { placeInFront(); placeRequested = false; }
+    leverHover = false;
     updateXRInput(now, dt);
   }
   updateGame(dt);
   if (state !== 'replay') syncMeshes(dt);
   confetti.update(dt);
   updateCushions(dt);
+  // la empuñadura se ilumina: blanca si tu mano está cerca, amarilla si la tienes agarrada
+  {
+    const k = myKeeper();
+    const grip = k && meshes[world.bodies.indexOf(k)]?.userData.grip;
+    if (grip) {
+      const held = hands.some((h) => h.lever) || mouse.lever;
+      grip.material.emissive.set(held ? 0xffc23d : 0xffffff);
+      grip.material.emissiveIntensity = held ? 0.9 : leverHover ? 0.35 : 0;
+    }
+  }
   if (state !== 'replay') effects.update(dt, world.bodies);
   if (stadium.group.visible) stadium.update(dt, t / 1000);
   if (room.visible) arena.update(dt, t / 1000);
