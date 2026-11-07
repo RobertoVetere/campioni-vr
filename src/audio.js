@@ -274,7 +274,7 @@ export function toggleMusic(force) {
   if (!want && music) { clearInterval(music.timer); music.out.gain.setTargetAtTime(0, ctx.currentTime, 0.1); if (music.stop) music.stop(); music = null; return false; }
   if (want && !music && samples.musica) {
     // si hay una canción de verdad en public/sounds/musica.mp3, suena esa en bucle
-    const out = ctx.createGain(); out.gain.value = 0.35; out.connect(ctx.destination);
+    const out = ctx.createGain(); out.gain.value = 0.28; out.connect(ctx.destination);
     const src = ctx.createBufferSource(); src.buffer = samples.musica; src.loop = true;
     src.connect(out); src.start();
     music = { out, timer: null, stop: () => src.stop(ctx.currentTime + 0.3) };
