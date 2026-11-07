@@ -1,0 +1,87 @@
+// Textos del juego en inglés y castellano. Siempre arranca en inglés (para el jurado);
+// el idioma se cambia desde el menú.
+const D = {
+  en: {
+    'btn.match': 'MATCH', 'btn.penalties': 'PENALTIES', 'btn.menu': 'MENU', 'btn.here': 'HERE', 'btn.skip': 'SKIP',
+    'pick': 'Choose MATCH or PENALTIES',
+    'menu.main': 'CAMPIONI', 'menu.resume': '▶  Resume', 'menu.game': 'Game  ›', 'menu.sound': 'Sound  ›', 'menu.stadium': 'Stadium  ›', 'menu.controls': 'Controls  ›', 'menu.lang': 'Language: ENGLISH', 'menu.quit': '✕  Quit game', 'menu.back': '‹  Back',
+    'menu.gameT': 'GAME', 'menu.play': '⚽  Play a match', 'menu.pens': '🥅  Penalty shootout', 'menu.rival': 'Opponent: {v}', 'menu.ball': 'Ball: {v}', 'menu.field': 'Pitch: {v}', 'menu.tutorial': '🎓  Tutorial', 'menu.records': '🏆  Records & rewards  ›',
+    'menu.recordsT': 'RECORDS', 'rec.wins': 'Wins {w} · Losses {l}', 'rec.streak': 'Best streak {s} · Biggest win +{d}', 'rec.pens': 'Shootouts won: {p}',
+    'menu.soundT': 'SOUND', 'menu.music': 'Music: {v}', 'menu.crowd': 'Crowd noise: {v}',
+    'menu.stadiumT': 'STADIUM', 'menu.stands': 'Table stands: {v}', 'menu.sky': 'Sky (VR): {v}', 'sky.night': 'NIGHT', 'sky.sunset': 'SUNSET',
+    'menu.controlsT': 'CONTROLS', 'menu.hand': 'Shooting hand: {v}', 'hand.right': 'RIGHT', 'hand.left': 'LEFT', 'menu.finger': 'Flick power: {v}', 'finger.suave': 'SOFT', 'finger.normal': 'NORMAL', 'finger.fuerte': 'STRONG',
+    'menu.keeper': 'Your keeper: {v}', 'keeper.auto': 'AUTOMATIC', 'keeper.manual': 'LEVER', 'menu.calib': '✋  Calibrate table',
+    'yes': 'ON', 'no': 'OFF',
+    'ball.garbanzo': 'Chickpea', 'ball.clasico': 'Classic ball', 'ball.mundial': 'World Cup ball', 'ball.cuero': 'Vintage leather',
+    'surf.tapete': 'Felt', 'surf.cesped': 'Grass', 'surf.arena': 'Sand', 'surf.tiza': 'Concrete & chalk',
+    'diff.facil': 'EASY', 'diff.normal': 'NORMAL', 'diff.dificil': 'HARD',
+    'need.garbanzo': 'Unlocked', 'need.tapete': 'Unlocked', 'need.clasico': 'Win 1 match', 'need.cesped': 'Win 1 match', 'need.tiza': 'Win 2 matches', 'need.mundial': 'Win 3 matches', 'need.cuero': 'Win a penalty shootout', 'need.arena': 'Win on HARD',
+    'you': 'YOU', 'rival': 'RIVAL', 'touch': '{who} · TOUCH {n}/{m}',
+    'hint.r': 'Left: move & pick · Right: shoot', 'hint.l': 'Right: move & pick · Left: shoot',
+    'shootNow': 'Now shoot! · {x}', 'cpuPrep': 'The rival is setting up… move your defence!', 'cpuShoot': 'The rival is about to shoot… grab the lever!',
+    'fk': 'FREE KICK · {t}', 'fk.you': 'Free kick: flick the flipped cap, the ball flies', 'fk.cpu': 'Rival free kick… make a wall!',
+    'pk': 'PENALTY! · {t}', 'pk.you': 'Penalty: shoot with the cap on the spot', 'pk.cpu': 'Penalty for the rival… grab the lever!',
+    'pens': 'PENALTIES · {a}  {b}', 'pens.miss': 'Missed! Now save one', 'pens.save': 'WHAT A SAVE!',
+    'end.pens': 'SHOOTOUT OVER', 'end.match': 'FULL TIME', 'unlocked': 'Unlocked: {x}!', 'and': ' and ', 'won': 'Campioni! You win', 'lost': 'The rival wins',
+    'foul': 'Foul by {t}! Free kick', 'goal.you': 'GOOOOOAL!', 'goal.cpu': 'Rival goal…', 'scores': '{t} SCORES', 'foulT': 'FOUL',
+    'replay': 'REPLAY', 'replay.you': 'What a goal…', 'replay.cpu': 'That’s how it went in…',
+    'defend': 'RIVAL · DEFEND! {n}', 'flick': 'finger {f} m/s → cap {c} m/s',
+    'calib.t': 'CALIBRATE THE TABLE', 'calib.x': 'Rest your OPEN palm flat on your real table and keep it still',
+    'tut': 'TUTORIAL · STEP {n}/4',
+    'tut1.t': '1/4 · PICK A CAP', 'tut1.x': 'With your LEFT hand, touch a blue cap with your finger',
+    'tut2.t': '2/4 · MOVE WITH YOUR PALM', 'tut2.x': 'Open your LEFT palm over a cap, lower it and drag it',
+    'tut3.t': '3/4 · SHOOT!', 'tut3.x': 'With your RIGHT hand, flick the yellow cap with your nail',
+    'tut4.t': '4/4 · SAVE WITH THE LEVER', 'tut4.x': 'Grab the blue handle behind your goal and slide it',
+    'tutDone.t': 'YOU’RE READY!', 'tutDone.x': 'Left moves and picks, right shoots, the lever saves. Go get them!',
+    'html.intro': 'The bottle-cap football we played as kids, on your table and with your own hands. A chickpea for a ball and two taped bottle tops in goal.',
+    'html.help': 'In the headset: rest your palm on your table to place the pitch at its height, and the tutorial teaches you to play in a minute. Left hand: move and pick caps. Right hand: flick to shoot. Grab the lever to move your keeper.<br>Without a headset: choose MATCH or PENALTIES, click a blue cap and drag back from it to shoot; move your keeper with the arrow keys.',
+    'html.ar': 'Play on your table (mixed reality)', 'html.vr': 'Play in full VR', 'html.vronly': 'Play in VR', 'html.noxr': 'This browser has no WebXR: you can only try it with the mouse here. Open it in the Meta Quest browser.', 'html.nodevice': 'No headset found. You can try it with the mouse.', 'html.err': 'Could not start: ', 'html.lang': 'Español',
+  },
+  es: {
+    'btn.match': 'PARTIDO', 'btn.penalties': 'PENALTIS', 'btn.menu': 'MENÚ', 'btn.here': 'AQUÍ', 'btn.skip': 'SALTAR',
+    'pick': 'Elige PARTIDO o PENALTIS',
+    'menu.main': 'CAMPIONI', 'menu.resume': '▶  Seguir jugando', 'menu.game': 'Partido  ›', 'menu.sound': 'Sonido  ›', 'menu.stadium': 'Estadio  ›', 'menu.controls': 'Controles  ›', 'menu.lang': 'Idioma: ESPAÑOL', 'menu.quit': '✕  Salir del juego', 'menu.back': '‹  Atrás',
+    'menu.gameT': 'PARTIDO', 'menu.play': '⚽  Jugar un partido', 'menu.pens': '🥅  Tanda de penaltis', 'menu.rival': 'Rival: {v}', 'menu.ball': 'Balón: {v}', 'menu.field': 'Campo: {v}', 'menu.tutorial': '🎓  Tutorial', 'menu.records': '🏆  Récords y premios  ›',
+    'menu.recordsT': 'RÉCORDS', 'rec.wins': 'Victorias {w} · Derrotas {l}', 'rec.streak': 'Mejor racha {s} · Mayor goleada +{d}', 'rec.pens': 'Tandas de penaltis ganadas: {p}',
+    'menu.soundT': 'SONIDO', 'menu.music': 'Música: {v}', 'menu.crowd': 'Ambiente de grada: {v}',
+    'menu.stadiumT': 'ESTADIO', 'menu.stands': 'Gradas de la mesa: {v}', 'menu.sky': 'Cielo (VR): {v}', 'sky.night': 'NOCHE', 'sky.sunset': 'ATARDECER',
+    'menu.controlsT': 'CONTROLES', 'menu.hand': 'Mano de tiro: {v}', 'hand.right': 'DERECHA', 'hand.left': 'IZQUIERDA', 'menu.finger': 'Fuerza del dedo: {v}', 'finger.suave': 'SUAVE', 'finger.normal': 'NORMAL', 'finger.fuerte': 'FUERTE',
+    'menu.keeper': 'Tu portero: {v}', 'keeper.auto': 'AUTOMÁTICO', 'keeper.manual': 'PALANCA', 'menu.calib': '✋  Calibrar la mesa',
+    'yes': 'SÍ', 'no': 'NO',
+    'ball.garbanzo': 'Garbanzo', 'ball.clasico': 'Balón clásico', 'ball.mundial': 'Balón Mundial', 'ball.cuero': 'Cuero histórico',
+    'surf.tapete': 'Tapete', 'surf.cesped': 'Césped', 'surf.arena': 'Arena', 'surf.tiza': 'Cemento y tiza',
+    'diff.facil': 'FÁCIL', 'diff.normal': 'NORMAL', 'diff.dificil': 'DIFÍCIL',
+    'need.garbanzo': 'De serie', 'need.tapete': 'De serie', 'need.clasico': 'Gana 1 partido', 'need.cesped': 'Gana 1 partido', 'need.tiza': 'Gana 2 partidos', 'need.mundial': 'Gana 3 partidos', 'need.cuero': 'Gana una tanda de penaltis', 'need.arena': 'Gana en DIFÍCIL',
+    'you': 'TÚ', 'rival': 'RIVAL', 'touch': '{who} · TOQUE {n}/{m}',
+    'hint.r': 'Izq.: mueve y elige · Der.: dispara', 'hint.l': 'Der.: mueve y elige · Izq.: dispara',
+    'shootNow': '¡Ahora tira! · {x}', 'cpuPrep': 'El rival prepara la jugada… ¡coloca tu defensa!', 'cpuShoot': 'El rival va a tirar… ¡a la palanca!',
+    'fk': 'TIRO LIBRE · {t}', 'fk.you': 'Tiro libre: dale a la chapa volteada, el balón sale por el aire', 'fk.cpu': 'Tiro libre del rival… ¡haz barrera!',
+    'pk': '¡PENALTI! · {t}', 'pk.you': 'Penalti: chuta con la chapa del punto', 'pk.cpu': 'Penalti para el rival… ¡agarra la palanca!',
+    'pens': 'PENALTIS · {a}  {b}', 'pens.miss': '¡Fallo! Ahora toca parar', 'pens.save': '¡PARADÓN!',
+    'end.pens': 'FIN DE LA TANDA', 'end.match': 'FINAL DEL PARTIDO', 'unlocked': '¡Desbloqueado: {x}!', 'and': ' y ', 'won': '¡Campioni! Has ganado', 'lost': 'Ha ganado el rival',
+    'foul': '¡Falta de {t}! Tiro libre', 'goal.you': '¡GOOOOOOL!', 'goal.cpu': 'Gol del rival…', 'scores': '{t} MARCA', 'foulT': 'FALTA',
+    'replay': 'REPETICIÓN', 'replay.you': 'Vaya golazo…', 'replay.cpu': 'Así entró…',
+    'defend': 'RIVAL · ¡DEFIENDE! {n}', 'flick': 'dedo {f} m/s → chapa {c} m/s',
+    'calib.t': 'CALIBRAR LA MESA', 'calib.x': 'Apoya la palma ABIERTA sobre tu mesa de verdad y déjala quieta',
+    'tut': 'TUTORIAL · PASO {n}/4',
+    'tut1.t': '1/4 · ELIGE UNA CHAPA', 'tut1.x': 'Con la mano IZQUIERDA, toca con el dedo una chapa azul',
+    'tut2.t': '2/4 · MUEVE CON LA PALMA', 'tut2.x': 'Abre la palma IZQUIERDA sobre una chapa, bájala y arrástrala',
+    'tut3.t': '3/4 · ¡DISPARA!', 'tut3.x': 'Con la DERECHA, dale un toque de uña a la chapa amarilla',
+    'tut4.t': '4/4 · PARA CON LA PALANCA', 'tut4.x': 'Agarra la empuñadura azul detrás de tu portería y muévela',
+    'tutDone.t': '¡YA SABES JUGAR!', 'tutDone.x': 'Izquierda mueve y elige, derecha dispara, y la palanca para. ¡A por ellos!',
+    'html.intro': 'El fútbol de chapas de toda la vida, sobre tu mesa y con tus manos. Un garbanzo de balón y dos tapones con celo de portero.',
+    'html.help': 'En el visor: apoya la palma en tu mesa para colocar el campo a su altura, y el tutorial te enseña a jugar en un minuto. Mano izquierda: mueve y elige chapas. Mano derecha: dispara con un toque de uña. Agarra la palanca para mover a tu portero.<br>Sin visor: elige PARTIDO o PENALTIS, haz clic en una chapa azul y luego arrastra desde ella hacia atrás; tu portero se mueve con las flechas.',
+    'html.ar': 'Jugar en tu mesa (realidad mixta)', 'html.vr': 'Jugar en VR completa', 'html.vronly': 'Jugar en VR', 'html.noxr': 'Este navegador no tiene WebXR: aquí solo puedes probarlo con el ratón. Ábrelo en el navegador de las Meta Quest.', 'html.nodevice': 'No se ha encontrado un visor. Puedes probarlo con el ratón.', 'html.err': 'No se pudo entrar: ', 'html.lang': 'English',
+  },
+};
+
+let lang = 'en'; // siempre empieza en inglés
+const listeners = [];
+export const getLang = () => lang;
+export function setLang(l) { lang = D[l] ? l : 'en'; for (const f of listeners) f(lang); }
+export function onLang(f) { listeners.push(f); }
+export function t(key, vars = {}) {
+  let s = D[lang][key] ?? D.en[key] ?? key;
+  for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, v);
+  return s;
+}

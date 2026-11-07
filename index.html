@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Campioni VR</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E⚽%3C/text%3E%3C/svg%3E" />
-  <meta name="description" content="Fútbol de chapas en realidad mixta, jugado con las manos." />
+  <meta name="description" content="Bottle-cap football in mixed reality, played with your hands." />
   <style>
     html, body { margin: 0; height: 100%; background: #1b2430; overflow: hidden; font-family: system-ui, sans-serif; }
     #app canvas { display: block; touch-action: none; }
@@ -20,16 +20,18 @@
     button.secondary { background: #2f3a48; }
     #xrinfo { color: #ffe9a8; }
     small { color: #9aa6b5; }
+    #langbtn { position: absolute; top: 14px; right: 14px; padding: 6px 10px; font-size: 13px; background: #2f3a48; }
   </style>
 </head>
 <body>
   <div id="app"></div>
   <div id="ui">
     <h1>Campioni <span>VR</span></h1>
-    <p>El fútbol de chapas de toda la vida, sobre tu mesa y con tus manos. Un garbanzo de balón y dos tapones con celo de portero.</p>
+    <button id="langbtn">Español</button>
+    <p id="intro"></p>
     <div id="xrbuttons"></div>
     <p id="xrinfo"></p>
-    <p><small>Al entrar en el visor: apoya la palma en tu mesa para colocar el campo a su altura, y el tutorial te enseña a jugar en un minuto. Mano izquierda: mueve y elige chapas. Mano derecha: dispara con un toque de uña. Agarra la palanca para mover a tu portero.<br>Sin visor: elige PARTIDO o PENALTIS, haz clic en una chapa azul y luego arrastra desde ella hacia atrás; tu portero se mueve con las flechas.</small></p>
+    <p><small id="help"></small></p>
   </div>
   <script type="module" src="/src/main.js"></script>
 </body>
