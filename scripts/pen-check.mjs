@@ -21,9 +21,8 @@ const out = await p.evaluate(async () => {
     if (g.state === 'end') break;
     const c = w.bodies.find((x) => x.team === 0 && x.kind === 'cap');
     const ball = w.ball;
-    const tx = (n % 2 ? 0.06 : -0.06), tz = -0.45;
-    const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
-    g.fire(w.bodies.indexOf(c), (dx / d) * 1.9, (dz / d) * 1.9, true);
+    const a = (n % 3 === 0 ? 0 : n % 3 === 1 ? 23 : -23) * Math.PI / 180; // centro, derecha, izquierda
+    g.fire(w.bodies.indexOf(c), Math.sin(a) * 2.2, -Math.cos(a) * 2.2, true);
     log.push(`${g.pen.kicks[0].map(Number).join('')} - ${g.pen.kicks[1].map(Number).join('')}`);
     await wait(200);
   }

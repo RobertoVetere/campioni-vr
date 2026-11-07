@@ -786,7 +786,8 @@ function startPenalty(team) {
   kicker.x = 0; kicker.z = spotZ - dir * (kicker.r + ball.r + 0.02);
   kicker.aimAssist = true;
   const keeper = world.bodies.find((b) => b.team !== team && b.kind === 'keeper');
-  keeper.x = 0; keeper.tx = 0; keeper.z = dir * (FIELD.L / 2 - keeper.r - 0.002);
+  keeper.x = 0; keeper.tx = 0; keeper.z = dir * (FIELD.L / 2 - keeper.r - 0.002); keeper.tz = keeper.z;
+  for (const h of hands) h.lever = false;
   keeper.homeZ = keeper.z; // en el penalti, el portero sobre la línea (si no, la física lo devuelve a su sitio)
   // todos los demás fuera del área
   const lineZ = dir * FIELD.L / 2;
@@ -842,12 +843,17 @@ function penDots(team) {
   const n = Math.max(5, k.length);
   return Array.from({ length: n }, (_, i) => (i < k.length ? (k[i] ? '●' : '✕') : '○')).join('');
 }
-function penaltyResult(scored) {
+function penaltyResult(scored, why = 'gol') {
   const team = lastShooter;
+  state = 'penpause';
   { const bl = world.ball, k = world.bodies.find((b) => b.kin && b.team !== team);
-    log.ev('pen_result', { team, scored, bx: bl.x, bz: bl.z, by: bl.y, kx: k?.x, why: scored ? 'gol' : Math.abs(bl.x) > FIELD.goalW / 2 ? 'fuera' : 'parada_o_corto' }); }
+    log.ev('pen_result', { team, scored, bx: bl.x, bz: bl.z, by: bl.y, kx: k?.x, kz: k?.z, why: scored ? 'gol' : why }); }
   pen.kicks[team].push(scored);
-  if (!scored) { say(t(team === 0 ? 'pens.miss' : 'pens.save')); if (team === 1) { crowdSwell(0.8); celebrate(0); } }
+  if (!scored) {
+    say(t(team === 0 ? (why === 'parada' ? 'pens.saved' : 'pens.miss') : 'pens.save'));
+    if (team === 1) { crowdSwell(0.8); celebrate(0); }
+    world.stopAll(); // no sigue rodando: el siguiente penalti empieza limpio
+  }
   const [a, b] = pen.kicks;
   const ga = a.filter(Boolean).length, gb = b.filter(Boolean).length;
   score = [ga, gb];
@@ -952,6 +958,15 @@ function updateGame(dt) {
     world.step(dt);
     world.goalsOn = true;
   }
+  if (state === 'moving' && mode === 'penalties' && world.ball) {
+    // el penalti se decide en cuanto: entra, o el balón va hacia atrás (parada), o sale, o se para
+    const bl = world.ball, dir = lastShooter === 0 ? -1 : 1;
+    const sp = Math.hypot(bl.vx, bl.vz);
+    const back = bl.vz * dir < -0.05 && Math.abs(bl.z) < FIELD.L / 2 - 0.02;
+    const passed = Math.abs(bl.z) > FIELD.L / 2 - 0.01 && Math.abs(bl.x) > FIELD.goalW / 2;
+    if (world.goal && world.goal.scorer !== lastShooter) { world.goal = null; penaltyResult(false, 'rebote'); return; }
+    if (!world.goal && timer > 0.15 && (back || passed || (sp < 0.02 && timer > 0.5) || timer > 3)) { penaltyResult(false, back ? 'parada' : passed ? 'fuera' : 'corto'); return; }
+  }
   if (state === 'moving') {
     // cámara lenta: el balón va camino de una portería y está cerca
     const ball = world.ball;
@@ -1049,6 +1064,17 @@ function updateGame(dt) {
         if (c !== touchInfo) { touchInfo = c; drawBoard(); }
         if (timer <= 0) { cpuPrep = false; touchInfo = t('touch', { who: t('rival'), n: TOUCHES - touchesLeft + 1, m: TOUCHES }); drawBoard(); for (const h of hands) releaseDrag(h); }
       }
+      return;
+    }
+    if (!cpuGen && mode === 'penalties' && lockedCap && world.ball) {
+      // penalti del rival: apunta a un lado (a veces al centro) y chuta fuerte; la dificultad da el error
+      const bl = world.ball, side = Math.random() < 0.15 ? 0 : Math.random() < 0.5 ? -1 : 1;
+      const tx = side * (0.035 + Math.random() * 0.035) + (Math.random() - 0.5) * DIFFICULTY[settings.difficulty].noise * 0.6;
+      const tz = FIELD.L / 2 + 0.02, dx = tx - bl.x, dz = tz - bl.z, dl = Math.hypot(dx, dz);
+      const v = 1.7 + Math.random() * 0.7;
+      cpuShot = { body: world.bodies.indexOf(lockedCap), vx: (dx / dl) * v, vz: (dz / dl) * v };
+      cpuGen = { next: () => ({ done: true, value: cpuShot }) };
+      timer = 0.6;
       return;
     }
     if (!cpuGen) cpuGen = think(world, 1, { noise: DIFFICULTY[settings.difficulty].noise * (mode === 'penalties' ? 1.8 : 1) });
@@ -1253,15 +1279,24 @@ function tryFlick(p, vel, prev, capH = 0.06, vy = 0) {
 function slingUpdate(holder, pinchOn, p) {
   // pellizcar SOBRE una chapa (al empezar el pellizco, no con la mano ya pellizcando por el camino),
   // estirar hacia atrás y soltar. El estirón es cuánto ha retrocedido la mano desde que pellizcaste.
-  const pinchStarted = pinchOn && !holder.wasPinch;
+  // Lo natural es cerrar el pellizco en el aire y bajar así a la chapa (lo vimos en el registro),
+  // así que se "coge" cuando la mano pellizcando está sobre la chapa y se para un instante (~0,15 s).
   holder.wasPinch = pinchOn;
-  if (!holder.sling && pinchStarted && p && p.y < 0.07) {
-    const b = myCapNear(p.x, p.z, 0.022);
+  if (!pinchOn || !p) holder.dwell = null;
+  if (!holder.sling && pinchOn && p && p.y < 0.06) {
+    const b = myCapNear(p.x, p.z, 0.02);
+    const now = performance.now();
     if (b && (b === selected || holder === mouse || !selected)) {
-      select(b, 'sling');
-      holder.sling = { b, y0: p.y, x0: p.x, z0: p.z };
-      log.ev('sling_start', { cap: b.num, d: Math.hypot(p.x - b.x, p.z - b.z) - b.r });
-    }
+      const d0 = holder.dwell;
+      if (!d0 || d0.b !== b || Math.hypot(p.x - d0.x, p.z - d0.z) > 0.012) holder.dwell = { b, x: p.x, z: p.z, t: now };
+      else if (now - d0.t > 150 || holder === mouse) {
+        select(b, 'sling');
+        holder.sling = { b, y0: p.y, x0: p.x, z0: p.z };
+        holder.dwell = null;
+        buttonSound();
+        log.ev('sling_start', { cap: b.num, d: Math.hypot(p.x - b.x, p.z - b.z) - b.r });
+      }
+    } else holder.dwell = null;
   }
   if (holder.sling) {
     const b = holder.sling.b;
@@ -1560,7 +1595,12 @@ function leverUpdate(h, grabbing, released, pts) {
   const g = gripPos(k);
   const dist = Math.min(...pts.filter(Boolean).map((p) => p.distanceTo(g)));
   if (dist < 0.08) leverHover = true;
-  if (!h.lever && grabbing && dist < 0.06) {
+  const zoomNow = root.scale.x;
+  if (h.lever && Math.abs(zoomNow - (h.leverZoom || zoomNow)) > 0.05) { log.ev('lever_release', { why: 'zoom' }); h.lever = false; applyKeeperMode(); }
+  const startGrab = grabbing && !h.wasGrab; // el gesto tiene que empezar junto a la empuñadura
+  h.wasGrab = grabbing;
+  if (!h.lever && startGrab && dist < 0.06) {
+    h.leverZoom = zoomNow;
     h.lever = true; buttonSound();
     log.ev('lever_grab', { d: dist, side: h.side });
     // el portero sigue el movimiento de la mano desde donde estaba (sin saltar hacia ella)
@@ -1654,7 +1694,7 @@ function updateXRInput(now, dt) {
   shooterTips.length = 0;
   for (const h of hands) h.dbg = null;
   if (log.enabled) queueMicrotask(() => log.sample(() => ({
-    st: state, sel: selected?.num, ball: world.ball ? [world.ball.x, world.ball.z] : null, tableY: tableBase.pos.y, zoom: root.scale.x, kx: myKeeper()?.x,
+    st: state, sel: selected?.num, ball: world.ball ? [world.ball.x, world.ball.z] : null, tableY: tableBase.pos.y, zoom: root.scale.x, kx: myKeeper()?.x, kz: myKeeper()?.z, selPos: selected ? [selected.x, selected.z] : null,
     L: hands.find((h) => h.side === 'left')?.dbg || hands[0].dbg, R: hands.find((h) => h.side === 'right')?.dbg || hands[1].dbg,
   })));
   if (state === 'calib') {
@@ -1691,9 +1731,10 @@ function updateXRInput(now, dt) {
         vIdx: iv ? Math.hypot(iv.vx, iv.vz) : 0, drag: h.drag?.num, hover: h.hover?.num, lever: h.lever ? 1 : 0, sling: h.sling ? 1 : 0,
       };
     }
-    // agarre de la palanca: con el pellizco (lo más fiable con seguimiento de manos), o el puño
-    const grabbing = h.pinching || fist;
-    const released = !h.pinching && !fist && (wideOpen || curl.straight >= 3 || pd > 0.05);
+    // agarre de la palanca: con el pellizco (lo más fiable con seguimiento de manos y lo que
+    // recomienda Meta). El 'puño' se detectaba con la mano relajada y la cogía sin querer.
+    const grabbing = h.pinching;
+    const released = !h.pinching && pd > 0.04;
     const handCenter = jointLocal(h.hand, 'middle-finger-metacarpal', new THREE.Vector3());
     if (leverUpdate(h, grabbing, released, [handCenter, knuckle, palm, pinchPt])) { releaseDrag(h); limitRings[hi].visible = false; return; }
     // mano que mueve: palma para arrastrar, dedo para elegir (nunca dispara)
@@ -1767,7 +1808,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     const b = pt && myCapNear(pt.x, pt.z, 0.006);
     // con el ratón: primer clic elige la chapa, el siguiente arrastra para tirar
     if (b && b !== selected) { select(b); mouse.down = false; return; }
-    if (b === selected) { mouse.wasPinch = false; slingUpdate(mouse, true, pt); }
+    if (b === selected) { mouse.wasPinch = false; mouse.dwell = null; slingUpdate(mouse, true, pt); }
   }
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
