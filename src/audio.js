@@ -6,7 +6,7 @@ export function initAudio() {
   if (!ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (AC) ctx = new AC();
-    if (ctx) { loadSample('musica'); loadSample('gol'); loadSample('grada'); }
+    if (ctx) { loadSample('musica'); loadSample('gol'); loadSample('grada'); loadSample('gol-voz'); }
   }
   if (ctx && ctx.state === 'suspended') ctx.resume();
 }

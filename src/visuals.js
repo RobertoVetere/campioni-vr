@@ -219,10 +219,10 @@ export function buildCap(body) {
     head.position.y = 0.0325; g.add(head);
     const hair = new THREE.Mesh(new THREE.IcosahedronGeometry(0.0054, 0), dark);
     hair.position.set(0, 0.0345, 0.001); hair.scale.set(1, 0.6, 1); g.add(hair);
-    const arms = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.004, 0.005), shirt);
+    const arms = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.004, 0.005), shirt);
     arms.position.y = 0.024; g.add(arms);
-    for (const x of [-0.019, 0.019]) {
-      const gl = new THREE.Mesh(new THREE.IcosahedronGeometry(0.0038, 0), glove);
+    for (const x of [-0.0135, 0.0135]) { // los guantes llegan justo hasta donde para (radio físico 1,7 cm)
+      const gl = new THREE.Mesh(new THREE.IcosahedronGeometry(0.0035, 0), glove);
       gl.position.set(x, 0.0255, 0); g.add(gl);
     }
     // barra y empuñadura (van hacia atrás: +z para el tuyo, -z para el rival)

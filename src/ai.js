@@ -18,21 +18,23 @@ function candidates(world, team) {
   const flipped = world.bodies.filter((b) => b.team === team && (b.flipped || b.locked));
   if (flipped.length) mine = flipped;
   for (const c of mine) {
-    // punto "de billar": detrás del garbanzo según la línea garbanzo→portería
-    const gx = 0 - ball.x, gz = goalZ - ball.z;
-    const gl = Math.hypot(gx, gz) || 1;
     const aims = [];
-    for (const off of [-0.05, -0.025, 0, 0.025, 0.05]) {
-      const tx = ball.x - (gx / gl) * (ball.r + c.r) * 0.9 + off * (-gz / gl);
-      const tz = ball.z - (gz / gl) * (ball.r + c.r) * 0.9 + off * (gx / gl);
-      aims.push([tx, tz]);
+    // punto "de billar": detrás del balón según la línea balón→objetivo (centro y las dos escuadras)
+    for (const gxT of [0, -0.065, 0.065]) {
+      const gx = gxT - ball.x, gz = goalZ - ball.z;
+      const gl = Math.hypot(gx, gz) || 1;
+      for (const off of [-0.025, 0, 0.025]) {
+        const tx = ball.x - (gx / gl) * (ball.r + c.r) * 0.9 + off * (-gz / gl);
+        const tz = ball.z - (gz / gl) * (ball.r + c.r) * 0.9 + off * (gx / gl);
+        aims.push([tx, tz]);
+      }
     }
     aims.push([ball.x, ball.z]);
     for (const [tx, tz] of aims) {
       const ax = tx - c.x, az = tz - c.z;
       const al = Math.hypot(ax, az);
       if (al < 1e-4) continue;
-      for (const sp of [0.9, 1.4, 1.9, 2.4]) {
+      for (const sp of [1.0, 1.6, 2.3]) {
         out.push({ body: world.bodies.indexOf(c), vx: (ax / al) * sp, vz: (az / al) * sp });
       }
     }

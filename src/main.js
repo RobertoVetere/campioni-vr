@@ -1,13 +1,16 @@
 import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.js';
 import { World, setupMatch, shoot, MAX_SHOT, FIELD, BALL_TYPES, MAGNET, KEEPER } from './physics.js';
+import { loadProgress, saveProgress, recordResult, unlockedKeys, UNLOCKS, DIFFICULTY } from './progress.js';
+import { createFireworks } from './fireworks.js';
+import { createGhostHand } from './ghosthand.js';
 import { buildArena } from './arena.js';
 import { SURFACES, surfaceTexture } from './surfaces.js';
 import { think } from './ai.js';
 import { buildTable, buildCap, buildBall, buildShadow, textPanel, makeButton, TEAMS } from './visuals.js';
 import { buildStadium } from './stadium.js';
 import { createEffects } from './effects.js';
-import { initAudio, hitSound, flickSound, goalSound, buttonSound, whistle, crowdOn, crowdVolume, toggleMusic, musicOn } from './audio.js';
+import { initAudio, hitSound, flickSound, goalSound, buttonSound, whistle, crowdOn, crowdVolume, crowdSwell, playSample, toggleMusic, musicOn } from './audio.js';
 
 // ---------- Ajustes de juego ----------
 const GOALS_TO_WIN = 3;
@@ -29,9 +32,16 @@ const MOVE_LIMIT = 0.06; // con la palma, cada arrastre llega como mucho a esto 
 const PALM_HEIGHT = 0.07; // la palma tiene que ir a ras de mesa (como mucho a esta altura)
 
 // ---------- Opciones (se recuerdan en este navegador) ----------
-const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal', surface: 'tapete', keeper: 'manual', shootHand: 'right' };
+const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal', surface: 'tapete', keeper: 'manual', shootHand: 'right', difficulty: 'normal' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('campioni') || '{}')); } catch (e) { /* sin almacenamiento */ }
 function saveSettings() { try { localStorage.setItem('campioni', JSON.stringify(settings)); } catch (e) { /* nada */ } }
+// progreso: victorias, récords y desbloqueos. Si algo guardado no está desbloqueado, se vuelve a lo de serie.
+const progress = loadProgress();
+if (!unlockedKeys(progress, 'ball').includes(settings.ball)) settings.ball = 'garbanzo';
+if (!unlockedKeys(progress, 'surface').includes(settings.surface)) settings.surface = 'tapete';
+if (!DIFFICULTY[settings.difficulty]) settings.difficulty = 'normal';
+// modo de juego: 'match' (partido), 'penalties' (tanda de penaltis) o 'tutorial'
+let mode = 'match';
 
 // ---------- Escena ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -99,6 +109,13 @@ shadowsOn(stadium.group);
 stadium.group.visible = settings.stands;
 const effects = createEffects([TEAMS[0].shirt, TEAMS[1].shirt]);
 root.add(effects.group);
+const tableFireworks = createFireworks(root, { scale: 0.18, size: 0.012 });
+const arenaFireworks = createFireworks(scene, { scale: 9, size: 0.02, max: 2500 });
+function celebrate(team, big = false) {
+  const z = team === 0 ? -FIELD.L / 2 : FIELD.L / 2;
+  tableFireworks.launch(big ? 9 : 5, { x: 0, y: 0.03, z, w: 0.3, d: 0.1 });
+  if (room.visible) arenaFireworks.launch(big ? 14 : 8, { x: 0, y: 2, z: 0, w: 70, d: 90 });
+}
 
 // Cambia el campo: textura, colores de la mesa y física
 function setSurface(type) {
@@ -301,7 +318,10 @@ addButton('▲', FIELD.W / 2 - 0.02, 0.03, nearZ, () => (root.position.y += 0.02
 addButton('▼', FIELD.W / 2 - 0.07, 0.03, nearZ, () => (root.position.y -= 0.02), { w: 0.04, color: '#444c58' });
 addButton('AQUÍ', FIELD.W / 2 - 0.13, 0.03, nearZ, () => (placeRequested = true), { w: 0.06, color: '#444c58' });
 addButton('MENÚ', -FIELD.W / 2 + 0.045, 0.03, nearZ, () => (menuOpen ? closeMenu() : openMenu()), { w: 0.07, color: '#7a4fd1' });
-const playBtn = addButton('JUGAR', 0, 0.09, 0.05, () => startMatch(), { w: 0.14, h: 0.05, color: '#1f8a3e', tilt: -0.2 });
+const playBtn = addButton('PARTIDO', -0.08, 0.09, 0.05, () => startMatch(), { w: 0.14, h: 0.05, color: '#1f8a3e', tilt: -0.2 });
+const penBtn = addButton('PENALTIS', 0.08, 0.09, 0.05, () => startPenalties(), { w: 0.14, h: 0.05, color: '#c8102e', tilt: -0.2 });
+function hideStartButtons() { playBtn.visible = false; penBtn.visible = false; }
+function showStartButtons() { playBtn.visible = true; penBtn.visible = true; }
 
 function shown(o) {
   for (let p = o; p; p = p.parent) if (!p.visible) return false;
@@ -336,12 +356,35 @@ const PAGES = {
   },
   partido: {
     title: 'PARTIDO',
-    items: () => [
-      [`Balón: ${BALL_TYPES[settings.ball].name}`, () => setBall(cycle(ballKeys, settings.ball))],
-      [`Campo: ${SURFACES[settings.surface].name}`, () => { setSurface(cycle(surfKeys, settings.surface)); saveSettings(); }],
-      ['↺  Empezar de nuevo', () => startMatch(), '#7a4fd1'],
-      ['‹  Atrás', () => showPage('main'), '#444c58'],
-    ],
+    items: () => {
+      const balls = unlockedKeys(progress, 'ball'), fields = unlockedKeys(progress, 'surface');
+      const lockedB = ballKeys.length - balls.length, lockedF = surfKeys.length - fields.length;
+      return [
+        ['⚽  Jugar un partido', () => startMatch(), '#1f8a3e'],
+        ['🥅  Tanda de penaltis', () => startPenalties(), '#c8102e'],
+        [`Rival: ${DIFFICULTY[settings.difficulty].name}`, () => { settings.difficulty = cycle(Object.keys(DIFFICULTY), settings.difficulty); applyDifficulty(); saveSettings(); }],
+        [`Balón: ${BALL_TYPES[settings.ball].name}${lockedB ? `  (+${lockedB}🔒)` : ''}`, () => { setBall(cycle(balls, settings.ball)); }],
+        [`Campo: ${SURFACES[settings.surface].name}${lockedF ? `  (+${lockedF}🔒)` : ''}`, () => { setSurface(cycle(fields, settings.surface)); saveSettings(); }],
+        ['🎓  Tutorial', () => startTutorial(), '#2f6f8f'],
+        ['🏆  Récords y premios  ›', () => showPage('records')],
+        ['‹  Atrás', () => showPage('main'), '#444c58'],
+      ];
+    },
+  },
+  records: {
+    title: 'RÉCORDS',
+    items: () => {
+      const p = progress;
+      const next = UNLOCKS.filter((u) => !u.ok(p)).slice(0, 2)
+        .map((u) => [`🔒 ${u.kind === 'ball' ? BALL_TYPES[u.key].name : SURFACES[u.key].name}: ${u.need}`, () => {}, '#2a2f38']);
+      return [
+        [`Victorias ${p.wins} · Derrotas ${p.losses}`, () => {}, '#2a2f38'],
+        [`Mejor racha ${p.bestStreak} · Mayor goleada +${p.bestDiff}`, () => {}, '#2a2f38'],
+        [`Tandas de penaltis ganadas: ${p.penWins}`, () => {}, '#2a2f38'],
+        ...next,
+        ['‹  Atrás', () => showPage('partido'), '#444c58'],
+      ];
+    },
   },
   sonido: {
     title: 'SONIDO',
@@ -365,6 +408,7 @@ const PAGES = {
       [`Mano de tiro: ${settings.shootHand === 'right' ? 'DERECHA' : 'IZQUIERDA'}`, () => { settings.shootHand = settings.shootHand === 'right' ? 'left' : 'right'; saveSettings(); }],
       [`Fuerza del dedo: ${settings.finger.toUpperCase()}`, () => { settings.finger = cycle(['suave', 'normal', 'fuerte'], settings.finger); saveSettings(); }],
       [`Tu portero: ${settings.keeper === 'auto' ? 'AUTOMÁTICO' : 'PALANCA'}`, () => { settings.keeper = settings.keeper === 'auto' ? 'manual' : 'auto'; applyKeeperMode(); saveSettings(); }],
+      ['✋  Calibrar la mesa', () => startCalib(), '#2f6f8f'],
       ['‹  Atrás', () => showPage('main'), '#444c58'],
     ],
   },
@@ -429,7 +473,7 @@ function exitGame() {
   toggleMusic(false);
   const session = renderer.xr.getSession();
   if (session) session.end();
-  else { state = 'menu'; ui.style.display = ''; playBtn.visible = true; say('Pulsa JUGAR con el dedo'); }
+  else { state = 'menu'; ui.style.display = ''; showStartButtons(); say('Elige PARTIDO o PENALTIS'); }
 }
 
 // ---------- Flecha de puntería (tirachinas) ----------
@@ -522,6 +566,7 @@ function snapshot() {
 
 let freeKick = false;
 let lastFlick = '';
+let timeScale = 1, slowFired = false;
 let selected = null; // chapa elegida por el jugador para el siguiente toque
 let lockedCap = null; // en tiro libre o penalti solo puede tirar esta
 
@@ -543,6 +588,7 @@ function select(b) {
   if (!b || selected === b) return;
   selected = b;
   buttonSound();
+  tutEvent('select');
 }
 
 // aparta las chapas que estén en un círculo (para colocar faltas y penaltis)
@@ -558,7 +604,11 @@ function clearSpot(x, z, rad, keep) {
   }
 }
 
+function applyDifficulty() { KEEPER.autoSpeed = DIFFICULTY[settings.difficulty].keeper; }
 function startMatch() {
+  mode = 'match';
+  hideStartButtons();
+  applyDifficulty();
   score = [0, 0];
   freeKick = false;
   setupMatch(world, 0, settings.ball);
@@ -613,14 +663,15 @@ function inAttackArea(team, p) {
 function startPenalty(team) {
   for (const b of world.bodies) { b.flipped = false; b.locked = false; b.vx = b.vz = 0; }
   const dir = team === 0 ? -1 : 1; // hacia dónde ataca
-  const spotZ = dir * (FIELD.L / 2 - 0.09);
+  const spotZ = dir * (FIELD.L / 2 - PEN_SPOT);
   const ball = world.ball;
   ball.x = 0; ball.z = spotZ; ball.y = 0; ball.vy = 0;
   let kicker = null, bd = Infinity;
   for (const b of world.bodies) if (b.team === team && b.kind === 'cap') { const d = Math.hypot(b.x, b.z - spotZ); if (d < bd) { bd = d; kicker = b; } }
   kicker.x = 0; kicker.z = spotZ - dir * (kicker.r + ball.r + 0.025);
   const keeper = world.bodies.find((b) => b.team !== team && b.kind === 'keeper');
-  keeper.x = 0; keeper.z = dir * (FIELD.L / 2 - keeper.r - 0.002);
+  keeper.x = 0; keeper.tx = 0; keeper.z = dir * (FIELD.L / 2 - keeper.r - 0.002);
+  keeper.homeZ = keeper.z; // en el penalti, el portero sobre la línea (si no, la física lo devuelve a su sitio)
   // todos los demás fuera del área
   const lineZ = dir * FIELD.L / 2;
   for (const b of world.bodies) {
@@ -638,6 +689,59 @@ function startPenalty(team) {
   else { state = 'cpu'; timer = 1.0; cpuPrep = false; cpuGen = null; cpuShot = null; say('Penalti para el rival… ¡agarra la palanca!'); }
   setAnchors();
   drawBoard();
+}
+
+// ---------- Tanda de penaltis: 5 por equipo, alternos; si hay empate, muerte súbita ----------
+let pen = null;
+const PEN_SPOT = 0.15; // distancia del punto de penalti a la línea de gol
+function startPenalties() {
+  mode = 'penalties';
+  hideStartButtons();
+  closeMenu();
+  applyDifficulty();
+  if (!renderer.xr.isPresenting) ui.style.display = 'none';
+  pen = { kicks: [[], []] };
+  score = [0, 0];
+  crowdOn();
+  crowdVolume(settings.crowd ? 1 : 0);
+  if (settings.music) toggleMusic(true);
+  penaltyKick(0);
+}
+function penaltyKick(team) {
+  // en el campo solo los dos porteros, el lanzador y el balón
+  setupMatch(world, team, settings.ball);
+  const kicker = world.bodies.find((b) => b.team === team && b.kind === 'cap');
+  world.bodies = world.bodies.filter((b) => b.kin || b === kicker || b === world.ball);
+  rebuildBodies();
+  startPenalty(team);
+  touchInfo = `PENALTIS · ${penDots(0)}  ${penDots(1)}`;
+  drawBoard();
+}
+function penDots(team) {
+  const k = pen.kicks[team];
+  const n = Math.max(5, k.length);
+  return Array.from({ length: n }, (_, i) => (i < k.length ? (k[i] ? '●' : '✕') : '○')).join('');
+}
+function penaltyResult(scored) {
+  const team = lastShooter;
+  pen.kicks[team].push(scored);
+  if (!scored) { say(team === 0 ? '¡Fallo! Ahora toca parar' : '¡PARADÓN!'); if (team === 1) { crowdSwell(0.8); celebrate(0); } }
+  const [a, b] = pen.kicks;
+  const ga = a.filter(Boolean).length, gb = b.filter(Boolean).length;
+  score = [ga, gb];
+  let over = false;
+  if (a.length <= 5 && b.length <= 5) {
+    const remA = 5 - a.length, remB = 5 - b.length;
+    if (ga + remA < gb || gb + remB < ga) over = true;
+  }
+  if (a.length >= 5 && a.length === b.length && ga !== gb) over = true;
+  touchInfo = `PENALTIS · ${penDots(0)}  ${penDots(1)}`;
+  drawBoard();
+  if (over) { finishGame(ga > gb); return; }
+  const next = a.length > b.length ? 1 : 0;
+  state = 'penpause';
+  timer = 1.3;
+  pen.next = next;
 }
 
 function setBall(type) {
@@ -658,7 +762,7 @@ let cpuPrep = false;
 function nextTouch() {
   setAnchors();
   const n = TOUCHES - touchesLeft + 1;
-  touchInfo = `${turn === 0 ? 'TÚ' : 'RIVAL'} · TOQUE ${n}/${TOUCHES}`;
+  touchInfo = mode === 'tutorial' && tut ? `TUTORIAL · PASO ${Math.min(4, tut.step + 1)}/4` : `${turn === 0 ? 'TÚ' : 'RIVAL'} · TOQUE ${n}/${TOUCHES}`;
   if (turn === 0) {
     state = 'aim';
     if (!selected || selected.team !== 0) autoSelect();
@@ -682,6 +786,7 @@ function fire(b, vx, vz, exact = false) {
   }
   shoot(b, vx, vz);
   flickSound();
+  if (b.team === 0) tutEvent('shot');
   aim.visible = false;
   world.ballTouched = false;
   world.shotTeam = b.team;
@@ -693,13 +798,20 @@ function fire(b, vx, vz, exact = false) {
   say('');
 }
 
+function finishGame(won) {
+  state = 'end';
+  const news = recordResult(progress, { mode, won, diff: settings.difficulty, goalsFor: score[0], goalsAgainst: score[1] });
+  touchInfo = mode === 'penalties' ? 'FIN DE LA TANDA' : 'FINAL DEL PARTIDO';
+  const names = news.map((u) => (u.kind === 'ball' ? BALL_TYPES[u.key].name : SURFACES[u.key].name));
+  say(names.length ? `¡Desbloqueado: ${names.join(' y ')}!` : won ? '¡Campioni! Has ganado' : 'Ha ganado el rival');
+  whistle('end');
+  if (won) { celebrate(0, true); crowdSwell(1); }
+  showStartButtons();
+  drawBoard();
+}
 function afterGoalOrEnd() {
   if (score[0] >= GOALS_TO_WIN || score[1] >= GOALS_TO_WIN) {
-    state = 'end';
-    touchInfo = 'FINAL DEL PARTIDO';
-    say(score[0] > score[1] ? '¡Campioni! Has ganado' : 'Ha ganado el rival');
-    whistle('end');
-    playBtn.visible = true;
+    finishGame(score[0] > score[1]);
   } else {
     const conceded = 1 - world.goal.scorer;
     freeKick = false;
@@ -717,6 +829,19 @@ function updateGame(dt) {
     world.goalsOn = true;
   }
   if (state === 'moving') {
+    // cámara lenta: el balón va camino de una portería y está cerca
+    const ball = world.ball;
+    let want = 1;
+    if (ball) {
+      const lineZ = ball.vz < 0 ? -FIELD.L / 2 : FIELD.L / 2;
+      const t = (lineZ - ball.z) / (ball.vz || 1e-9);
+      const xAt = ball.x + ball.vx * t;
+      const sp = Math.hypot(ball.vx, ball.vz);
+      if (t > 0 && t < 0.35 && sp > 0.5 && Math.abs(xAt) < FIELD.goalW / 2 + 0.015) want = 0.3;
+    }
+    if (want < 1 && !slowFired) { slowFired = true; crowdSwell(0.6); }
+    timeScale += (want - timeScale) * Math.min(1, dt * 8);
+    dt *= timeScale;
     timer += dt;
     const ev = world.step(dt);
     rec.push(snapshot());
@@ -733,8 +858,10 @@ function updateGame(dt) {
       score[s]++;
       whistle('goal');
       goalSound();
+      if (s === 0) playSample('gol-voz', 0.9); // tu "¡GOOOOL!" grabado (si existe)
       stadium.cheer(s);
       arena.cheer(s);
+      celebrate(s);
       confetti.burst(s === 0 ? -FIELD.L / 2 : FIELD.L / 2, s);
       say(s === 0 ? '¡GOOOOOOL!' : 'Gol del rival…');
       touchInfo = `${TEAMS[s].name} MARCA`;
@@ -745,7 +872,10 @@ function updateGame(dt) {
     } else if (world.settled() || timer > 10) {
       world.stopAll();
       for (const b of world.bodies) b.loft = 0;
+      slowFired = false;
       if (freeKick) { freeKick = false; lockedCap = null; for (const b of world.bodies) { b.flipped = false; b.locked = false; } }
+      if (mode === 'penalties') { penaltyResult(false); return; }
+      if (mode === 'tutorial') { touchesLeft = TOUCHES; nextTouch(); return; }
       if (world.foul !== null) {
         // falta: se acaba el turno y saca el rival
         state = 'foul';
@@ -758,6 +888,9 @@ function updateGame(dt) {
         else giveTurn(1 - lastShooter);
       }
     }
+  } else if (state === 'penpause') {
+    timer -= dt;
+    if (timer <= 0) penaltyKick(pen.next);
   } else if (state === 'foul') {
     timer -= dt;
     if (timer <= 0) {
@@ -767,6 +900,8 @@ function updateGame(dt) {
     }
   } else if (state === 'goal') {
     timer -= dt;
+    if (timer <= 0 && mode === 'penalties') { penaltyResult(true); return; }
+    if (timer <= 0 && mode === 'tutorial') { tutorialKickoff(); return; }
     if (timer <= 0) {
       state = 'replay';
       replayT = 0;
@@ -790,7 +925,7 @@ function updateGame(dt) {
       }
       return;
     }
-    if (!cpuGen) cpuGen = think(world, 1, { noise: 0.07 });
+    if (!cpuGen) cpuGen = think(world, 1, { noise: DIFFICULTY[settings.difficulty].noise * (mode === 'penalties' ? 1.8 : 1) });
     if (!cpuShot) {
       const t0 = performance.now();
       while (performance.now() - t0 < 8) {
@@ -994,6 +1129,188 @@ function pokeButtons(p, now) {
   }
 }
 
+// ---------- Panel flotante de instrucciones (calibración y tutorial), a la altura de los ojos ----------
+const info = new THREE.Group();
+info.visible = false;
+scene.add(info);
+const infoPanel = textPanel(0.46, 0.16, 1700);
+info.add(infoPanel);
+const skipBtn = makeButton('SALTAR', 0.12, 0.04, '#444c58');
+skipBtn.position.set(0.16, -0.11, 0.002);
+skipBtn.userData.onPress = () => skipInfo();
+info.add(skipBtn);
+buttons.push(skipBtn);
+info.traverse((o) => { if (o.material) { o.material.depthTest = false; o.renderOrder = 22; } });
+function drawInfo(title, text, progressK = -1) {
+  infoPanel.userData.draw((g, w, h) => {
+    g.fillStyle = 'rgba(8,14,22,0.92)';
+    g.beginPath(); g.roundRect(0, 0, w, h, 40); g.fill();
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#ffd34d'; g.font = `900 ${Math.round(h * 0.2)}px system-ui, sans-serif`;
+    g.fillText(title, w / 2, h * 0.2);
+    g.fillStyle = '#ffffff'; g.font = `600 ${Math.round(h * 0.13)}px system-ui, sans-serif`;
+    // dos líneas como mucho
+    const words = text.split(' '); const lines = ['']; 
+    for (const wd of words) { const t = (lines[lines.length - 1] + ' ' + wd).trim(); if (g.measureText(t).width > w * 0.9 && lines.length < 3) lines.push(wd); else lines[lines.length - 1] = t; }
+    lines.forEach((l, i) => g.fillText(l, w / 2, h * (0.5 + i * 0.17)));
+    if (progressK >= 0) {
+      g.fillStyle = 'rgba(255,255,255,0.15)'; g.fillRect(w * 0.15, h * 0.86, w * 0.7, h * 0.05);
+      g.fillStyle = '#7dffa1'; g.fillRect(w * 0.15, h * 0.86, w * 0.7 * Math.min(1, progressK), h * 0.05);
+    }
+  });
+}
+function placeFloating(obj, dist, dy) {
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  const head = new THREE.Vector3(), dir = new THREE.Vector3();
+  cam.getWorldPosition(head); cam.getWorldDirection(dir);
+  if (renderer.xr.isPresenting) { dir.y = 0; if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1); dir.normalize(); }
+  obj.position.copy(head).addScaledVector(dir, dist);
+  if (renderer.xr.isPresenting) obj.position.y = head.y + dy;
+  obj.lookAt(head.x, renderer.xr.isPresenting ? obj.position.y : head.y, head.z);
+}
+function skipInfo() {
+  if (state === 'calib') finishCalib(null);
+  else if (mode === 'tutorial') endTutorial();
+}
+
+// ---------- Calibrar la mesa: apoya la palma abierta en tu mesa y déjala quieta un segundo ----------
+const PALM_ABOVE_TABLE = 0.016; // a qué altura queda el centro de la palma sobre la mesa al apoyarla
+const calibRing = new THREE.Mesh(new THREE.RingGeometry(0.035, 0.045, 48, 1, 0, 0.01), new THREE.MeshBasicMaterial({ color: 0x7dffa1, side: THREE.DoubleSide, toneMapped: false, transparent: true, depthTest: false }));
+calibRing.rotation.x = -Math.PI / 2; calibRing.visible = false; calibRing.renderOrder = 23;
+scene.add(calibRing);
+let calibK = 0;
+function startCalib() {
+  closeMenu();
+  hideStartButtons();
+  state = 'calib';
+  calibK = 0;
+  for (const h of hands) h.calHist = [];
+  placeFloating(info, 0.6, 0.06);
+  info.visible = true;
+  drawInfo('CALIBRAR LA MESA', 'Apoya la palma ABIERTA sobre tu mesa de verdad y déjala quieta', 0);
+}
+function calibUpdate(dt) {
+  let best = null;
+  for (const h of hands) {
+    const wrist = jointLocal(h.hand, 'wrist', new THREE.Vector3());
+    const knuckle = jointLocal(h.hand, 'middle-finger-phalanx-proximal', new THREE.Vector3());
+    const midTip = jointLocal(h.hand, 'middle-finger-tip', new THREE.Vector3());
+    if (!wrist || !knuckle || !midTip || midTip.distanceTo(wrist) < 0.12) { h.calHist = []; continue; }
+    const palmW = root.localToWorld(wrist.clone().add(knuckle).multiplyScalar(0.5));
+    const now = performance.now();
+    h.calHist.push({ t: now, p: palmW });
+    while (h.calHist.length && now - h.calHist[0].t > 700) h.calHist.shift();
+    const still = h.calHist.length > 5 && h.calHist.every((q) => q.p.distanceTo(palmW) < 0.012) && now - h.calHist[0].t > 600;
+    if (still) best = palmW;
+    calibRing.visible = true;
+    calibRing.position.set(palmW.x, palmW.y - PALM_ABOVE_TABLE + 0.002, palmW.z);
+  }
+  calibK = best ? calibK + dt : Math.max(0, calibK - dt * 2);
+  calibRing.geometry.dispose();
+  calibRing.geometry = new THREE.RingGeometry(0.035, 0.045, 48, 1, 0, Math.max(0.01, Math.PI * 2 * Math.min(1, calibK)));
+  drawInfo('CALIBRAR LA MESA', 'Apoya la palma ABIERTA sobre tu mesa de verdad y déjala quieta', calibK);
+  if (calibK >= 1 && best) finishCalib(best.y - PALM_ABOVE_TABLE);
+}
+function finishCalib(tableY) {
+  if (tableY !== null) { root.position.y = tableY; buttonSound(); celebrate(0); }
+  calibRing.visible = false;
+  info.visible = false;
+  if (!progress.tutorialDone && renderer.xr.isPresenting) startTutorial();
+  else { state = 'menu'; showStartButtons(); say('Elige PARTIDO o PENALTIS'); }
+}
+
+// ---------- Tutorial jugable (60-90 s): no avanza hasta que haces cada gesto ----------
+const ghost = createGhostHand();
+root.add(ghost.group);
+const TUT = [
+  { title: '1/4 · ELIGE UNA CHAPA', text: 'Con la mano IZQUIERDA, toca con el dedo una chapa azul', side: 'left', pose: 'point', done: 'select' },
+  { title: '2/4 · MUEVE CON LA PALMA', text: 'Abre la palma IZQUIERDA sobre una chapa, bájala y arrástrala', side: 'left', pose: 'flat', done: 'drag' },
+  { title: '3/4 · ¡DISPARA!', text: 'Con la DERECHA, dale un toque de uña a la chapa amarilla', side: 'right', pose: 'point', done: 'shot' },
+  { title: '4/4 · PARA CON LA PALANCA', text: 'Agarra la empuñadura azul detrás de tu portería y muévela', side: 'right', pose: 'fist', done: 'lever' },
+];
+let tut = null;
+function startTutorial() {
+  mode = 'tutorial';
+  hideStartButtons();
+  closeMenu();
+  setupMatch(world, 0, settings.ball);
+  rebuildBodies();
+  turn = 0; touchesLeft = TOUCHES;
+  tut = { step: 0, t: 0, fin: 0 };
+  placeFloating(info, 0.65, 0.12);
+  info.visible = true;
+  ghost.group.visible = true;
+  nextTouch();
+  showTutStep();
+}
+function showTutStep() {
+  const st = TUT[tut.step];
+  ghost.side(st.side); ghost.pose(st.pose);
+  drawInfo(st.title, st.text);
+  touchInfo = `TUTORIAL · PASO ${tut.step + 1}/4`;
+  drawBoard();
+}
+function tutEvent(name) {
+  if (mode !== 'tutorial' || !tut || tut.fin) return;
+  if (TUT[tut.step].done !== name) return;
+  buttonSound();
+  confetti.burst(0, 0);
+  tut.step++;
+  if (tut.step >= TUT.length) {
+    tut.fin = performance.now() + 3000;
+    ghost.group.visible = false;
+    drawInfo('¡YA SABES JUGAR!', 'Izquierda mueve y elige, derecha dispara, y la palanca para. ¡A por ellos!');
+    progress.tutorialDone = true; saveProgress(progress);
+    celebrate(0);
+  } else showTutStep();
+}
+function tutorialKickoff() {
+  setupMatch(world, 0, settings.ball);
+  rebuildBodies();
+  touchesLeft = TOUCHES;
+  nextTouch();
+}
+function endTutorial() {
+  progress.tutorialDone = true; saveProgress(progress);
+  tut = null;
+  ghost.group.visible = false;
+  info.visible = false;
+  mode = 'match';
+  state = 'menu';
+  setupMatch(world, 0, settings.ball);
+  rebuildBodies();
+  showStartButtons();
+  say('Elige PARTIDO o PENALTIS');
+  touchInfo = '';
+  drawBoard();
+}
+function tutorialUpdate(dt) {
+  if (mode !== 'tutorial' || !tut) return;
+  tut.t += dt;
+  if (tut.fin) { if (performance.now() > tut.fin) endTutorial(); return; }
+  const st = TUT[tut.step];
+  const tt = tut.t;
+  const g = ghost.group;
+  g.rotation.set(0, 0, 0);
+  if (st.done === 'select') {
+    const c = world.bodies.find((b) => b.team === 0 && b.kind === 'cap' && b !== selected) || world.bodies.find((b) => b.team === 0 && b.kind === 'cap');
+    g.rotation.x = -0.6; // mano inclinada, el índice apuntando a la chapa
+    g.position.set(c.x, 0.06 + 0.025 * Math.abs(Math.sin(tt * 3)), c.z + 0.075);
+  } else if (st.done === 'drag') {
+    const c = selected || world.bodies.find((b) => b.team === 0 && b.kind === 'cap');
+    g.position.set(c.x + Math.sin(tt * 2) * 0.03, 0.022, c.z + 0.025);
+  } else if (st.done === 'shot') {
+    const c = selected || world.bodies.find((b) => b.team === 0 && b.kind === 'cap');
+    const ph = (tt % 1.4) / 1.4;
+    const k = ph < 0.55 ? 0 : ph < 0.68 ? (ph - 0.55) / 0.13 : 1;
+    g.rotation.x = -0.3;
+    g.position.set(c.x, 0.04, c.z + 0.15 - k * 0.06);
+  } else if (st.done === 'lever') {
+    const k = myKeeper();
+    if (k) { const gp = gripPos(k); g.position.set(gp.x + Math.sin(tt * 2) * 0.04, gp.y + 0.02, gp.z + 0.02); }
+  }
+}
+
 // ---------- Palanca del portero ----------
 const myKeeper = () => world.bodies.find((b) => b.kin && b.team === 0);
 function gripPos(k) { return new THREE.Vector3(k.x, 0.014, k.homeZ + 0.155); }
@@ -1021,12 +1338,14 @@ function leverUpdate(h, grabbing, released, pts) {
     h.lever = true; buttonSound();
     // el portero sigue el movimiento de la mano desde donde estaba (sin saltar hacia ella)
     h.leverOff = k.x - pts.find(Boolean).x;
+    h.leverX0 = k.x;
   }
   // se suelta al abrir la mano (o si te alejas mucho): así no se cae a mitad de parada
   if (h.lever && (released || dist > 0.15)) { h.lever = false; applyKeeperMode(); }
   if (h.lever) {
     k.auto = false;
     k.tx = Math.max(-KEEPER.range, Math.min(KEEPER.range, pts.find(Boolean).x + h.leverOff));
+    if (Math.abs(k.x - h.leverX0) > 0.03) tutEvent('lever');
   }
   return h.lever;
 }
@@ -1080,6 +1399,7 @@ function palmUpdate(h, i, open, closing, palm, dt) {
     h.off = { x: best.x - palm.x, z: best.z - palm.z };
     if (world.owner !== best) { best.ax = best.x; best.az = best.z; }
     best.drag = { tx: best.x, tz: best.z };
+    h.grabAt = { x: best.x, z: best.z };
     buttonSound();
   }
   const b = h.drag;
@@ -1089,12 +1409,18 @@ function palmUpdate(h, i, open, closing, palm, dt) {
   tx = Math.max(-FIELD.W / 2 + b.r, Math.min(FIELD.W / 2 - b.r, tx));
   tz = Math.max(-FIELD.L / 2 + b.r, Math.min(FIELD.L / 2 - b.r, tz));
   b.drag.tx = tx; b.drag.tz = tz;
+  if (h.grabAt && Math.hypot(b.x - h.grabAt.x, b.z - h.grabAt.z) > 0.02) tutEvent('drag');
   limitRings[i].visible = true;
   limitRings[i].position.set(b.ax, 0.0009, b.az);
   return true;
 }
 
 function updateXRInput(now, dt) {
+  if (state === 'calib') {
+    for (const h of hands) { const tip = jointLocal(h.hand, 'index-finger-tip', v1); if (tip) pokeButtons(tip.clone(), now); }
+    calibUpdate(dt);
+    return;
+  }
   hands.forEach((h, hi) => {
     h.tipBall.visible = false;
     const tip = jointLocal(h.hand, 'index-finger-tip', v1);
@@ -1194,7 +1520,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   }
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
-  if (mouse.lever) { const pt = pointerTable(e), k = myKeeper(); if (pt && k) k.tx = Math.max(-KEEPER.range, Math.min(KEEPER.range, pt.x)); return; }
+  if (mouse.lever) { const pt = pointerTable(e), k = myKeeper(); if (pt && k) { k.tx = Math.max(-KEEPER.range, Math.min(KEEPER.range, pt.x)); if (Math.abs(k.tx) > 0.03) tutEvent('lever'); } return; }
   if (mouse.down && state === 'aim') slingUpdate(mouse, true, pointerTable(e));
 });
 addEventListener('keydown', (e) => {
@@ -1263,7 +1589,9 @@ function onXRStart() {
   tableLegs.visible = !passthrough;
   applySky();
   placeRequested = true;
+  calibPending = true; // en cuanto la mesa esté delante, pedimos apoyar la palma
 }
+let calibPending = false;
 function onXREnd() {
   ui.style.display = '';
   toggleMusic(false);
@@ -1284,12 +1612,16 @@ renderer.setAnimationLoop((t) => {
   const now = performance.now();
   if (renderer.xr.isPresenting) {
     if (placeRequested) { placeInFront(); placeRequested = false; }
+    if (calibPending) { calibPending = false; startCalib(); }
     leverHover = false;
     updateXRInput(now, dt);
   }
   updateGame(dt);
+  tutorialUpdate(dt);
   if (state !== 'replay') syncMeshes(dt);
   confetti.update(dt);
+  tableFireworks.update(dt);
+  if (room.visible) arenaFireworks.update(dt);
   updateCushions(dt);
   // la empuñadura se ilumina: blanca si tu mano está cerca, amarilla si la tienes agarrada
   {
@@ -1341,7 +1673,7 @@ addEventListener('resize', () => {
 setupMatch(world, 0, settings.ball);
 setSurface(settings.surface);
 rebuildBodies();
-say('Pulsa JUGAR con el dedo');
+say('Elige PARTIDO o PENALTIS');
 drawBoard();
 setupXRButtons();
 
@@ -1349,4 +1681,4 @@ setupXRButtons();
 window.__campioni = { root, renderer, camera, applySky,
   tipWorld: (i) => { const j = hands[i].hand.joints?.['index-finger-tip']; if (!j || !j.visible) return null; const v = new THREE.Vector3(); j.getWorldPosition(v); return v.toArray(); },
   toWorld: (x, y, z) => root.localToWorld(new THREE.Vector3(x, y, z)).toArray(),
-  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, get selected() { return selected; }, setSurface, showPage, myKeeper, get cpuPrep() { return cpuPrep; }, select, startPenalty, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };
+  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, get selected() { return selected; }, setSurface, showPage, startPenalties, get mode() { return mode; }, startTutorial, tutEvent, get tut() { return tut; }, startCalib, get pen() { return pen; }, progress, myKeeper, get cpuPrep() { return cpuPrep; }, select, startPenalty, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };

@@ -21,7 +21,7 @@ export const KIND = { CAP: 'cap', KEEPER: 'keeper', BALL: 'ball' };
 
 const PROPS = {
   cap: { r: 0.0135, m: 0.002, mu: 0.34, e: 0.82 },
-  keeper: { r: 0.021, m: 0.03, mu: 0.45, e: 0.6 },
+  keeper: { r: 0.017, m: 0.03, mu: 0.45, e: 0.6 },
   ball: { r: 0.0048, m: 0.0009, mu: 0.16, e: 0.9 },
 };
 
