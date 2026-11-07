@@ -1,3 +1,36 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Campioni VR</title></head>
-<body style="background:#10261a;color:#fff;font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><h1>Campioni VR — en construcción</h1></body></html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Campioni VR</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E⚽%3C/text%3E%3C/svg%3E" />
+  <meta name="description" content="Fútbol de chapas en realidad mixta, jugado con las manos." />
+  <style>
+    html, body { margin: 0; height: 100%; background: #1b2430; overflow: hidden; font-family: system-ui, sans-serif; }
+    #app canvas { display: block; touch-action: none; }
+    #ui { position: fixed; left: 16px; right: 16px; top: 16px; max-width: 460px; color: #fff;
+      background: rgba(10, 16, 24, 0.82); border-radius: 16px; padding: 18px 20px; backdrop-filter: blur(6px); }
+    h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: 0.5px; }
+    h1 span { color: #4f8ff7; }
+    p { margin: 6px 0; line-height: 1.4; color: #d7dde6; font-size: 15px; }
+    #xrbuttons { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 4px; }
+    button { font: 600 17px system-ui, sans-serif; padding: 14px 16px; border: 0; border-radius: 12px;
+      background: #1f8a3e; color: #fff; cursor: pointer; }
+    button.secondary { background: #2f3a48; }
+    #xrinfo { color: #ffe9a8; }
+    small { color: #9aa6b5; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="ui">
+    <h1>Campioni <span>VR</span></h1>
+    <p>El fútbol de chapas de toda la vida, sobre tu mesa y con tus manos. Un garbanzo de balón y dos tapones con celo de portero.</p>
+    <div id="xrbuttons"></div>
+    <p id="xrinfo"></p>
+    <p><small>Con las manos: dale a una chapa azul con la punta del dedo, como un toque de uña. O pellízcala, tira hacia atrás y suelta. Gana quien llegue a 3 goles.<br>Sin visor: pulsa JUGAR, arrastra desde una chapa azul hacia atrás y suelta.</small></p>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

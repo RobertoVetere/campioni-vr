@@ -1,0 +1,228 @@
+// Física 2D de mesa: chapas, porteros y garbanzo deslizando sobre un tapete.
+// Coordenadas en metros sobre el plano de la mesa: x = ancho, z = largo.
+// El jugador (equipo 0) defiende la portería de z = +L/2 (la que tiene cerca)
+// y ataca hacia z negativo. La CPU (equipo 1) al revés.
+
+export const FIELD = {
+  L: 0.9, // largo
+  W: 0.56, // ancho
+  goalW: 0.16, // boca de la portería
+  goalD: 0.05, // fondo de la portería
+};
+
+export const G = 9.81;
+const STEP = 1 / 240;
+const STOP_SPEED = 0.004;
+
+// Bandas de goma: rebotan mucho (las redes de la portería no tanto, ver más abajo)
+export const WALL_E = { ball: 0.8, cap: 0.72, keeper: 0.6 };
+
+export const KIND = { CAP: 'cap', KEEPER: 'keeper', BALL: 'ball' };
+
+const PROPS = {
+  cap: { r: 0.0135, m: 0.002, mu: 0.34, e: 0.82 },
+  keeper: { r: 0.019, m: 0.006, mu: 0.45, e: 0.6 },
+  ball: { r: 0.0048, m: 0.0009, mu: 0.16, e: 0.9 },
+};
+
+export function makeBody(kind, x, z, team = -1, num = 0) {
+  const p = PROPS[kind];
+  return { kind, team, num, x, z, vx: 0, vz: 0, r: p.r, m: p.m, mu: p.mu, e: p.e, angle: 0, spin: 0, roll: 0 };
+}
+
+function wallSegments(f) {
+  const { L, W, goalW, goalD } = f;
+  const hl = L / 2, hw = W / 2, gw = goalW / 2;
+  const s = [
+    [-hw, -hl, -hw, hl], // lateral izq
+    [hw, -hl, hw, hl], // lateral der
+  ];
+  for (const sz of [1, -1]) {
+    const z = sz * hl, zb = sz * (hl + goalD);
+    s.push([-hw, z, -gw, z], [gw, z, hw, z]); // fondo a los lados de la portería
+    s.push([-gw, z, -gw, zb, 1], [gw, z, gw, zb, 1]); // laterales de la red (no rebotan)
+    s.push([-gw, zb, gw, zb, 1]); // fondo de la red
+  }
+  return s;
+}
+
+export class World {
+  constructor(field = FIELD) {
+    this.f = field;
+    this.bodies = [];
+    this.walls = wallSegments(field);
+    this.ball = null;
+    this.goal = null; // {scorer} cuando entra
+    this.ballTouched = false;
+    this.events = [];
+  }
+
+  add(b) {
+    this.bodies.push(b);
+    if (b.kind === KIND.BALL) this.ball = b;
+    return b;
+  }
+
+  clone() {
+    const w = new World(this.f);
+    for (const b of this.bodies) w.add({ ...b });
+    return w;
+  }
+
+  settled() {
+    return this.bodies.every((b) => b.vx === 0 && b.vz === 0);
+  }
+
+  // Avanza dt segundos. Devuelve los eventos (choques y gol) ocurridos.
+  step(dt, collectEvents = true) {
+    this.events = [];
+    let n = Math.max(1, Math.round(dt / STEP));
+    if (n > 12) n = 12;
+    for (let i = 0; i < n && !this.goal; i++) {
+      // pasos más finos cuando algo va rápido: el garbanzo no puede saltarse una banda
+      let maxS = 0;
+      for (const b of this.bodies) {
+        const s = Math.hypot(b.vx, b.vz) / b.r;
+        if (s > maxS) maxS = s;
+      }
+      const k = Math.min(16, Math.max(1, Math.ceil((maxS * STEP) / 0.4)));
+      for (let j = 0; j < k && !this.goal; j++) this.substep(STEP / k, collectEvents);
+    }
+    return this.events;
+  }
+
+  // Seguridad: nada puede quedar fuera del recinto (mesa + porterías)
+  contain(b) {
+    const { L, W, goalW, goalD } = this.f;
+    const hw = W / 2 - b.r, hl = L / 2, gw = goalW / 2 - b.r;
+    if (b.x > hw) { b.x = hw; if (b.vx > 0) b.vx = -b.vx * 0.5; }
+    if (b.x < -hw) { b.x = -hw; if (b.vx < 0) b.vx = -b.vx * 0.5; }
+    const inMouth = Math.abs(b.x) <= gw;
+    const zmax = inMouth ? hl + goalD - b.r : hl - b.r;
+    if (Math.abs(b.z) > hl - b.r && !inMouth) {
+      // fuera de la boca: o está en el campo o dentro de la red
+      if (Math.abs(b.z) > hl) { b.x = Math.sign(b.x) * gw; }
+      else { b.z = Math.sign(b.z) * (hl - b.r); if (b.vz * Math.sign(b.z) > 0) b.vz = -b.vz * 0.5; }
+    }
+    if (Math.abs(b.z) > zmax) { b.z = Math.sign(b.z) * zmax; if (b.vz * Math.sign(b.z) > 0) b.vz = -b.vz * 0.5; }
+  }
+
+  substep(h, ev) {
+    const B = this.bodies;
+    // Rozamiento de Coulomb (tapete) + algo de amortiguación
+    for (const b of B) {
+      const s = Math.hypot(b.vx, b.vz);
+      if (s === 0) { b.spin *= 0.9; continue; }
+      const dec = b.mu * G * h + s * 0.15 * h;
+      if (s <= dec || s < STOP_SPEED) { b.vx = 0; b.vz = 0; }
+      else { const k = (s - dec) / s; b.vx *= k; b.vz *= k; }
+      b.x += b.vx * h;
+      b.z += b.vz * h;
+      b.roll += (s * h) / b.r;
+      b.angle += b.spin * h;
+      b.spin *= 1 - 2.5 * h;
+    }
+    // Choques entre cuerpos
+    for (let i = 0; i < B.length; i++) {
+      const a = B[i];
+      for (let j = i + 1; j < B.length; j++) {
+        const b = B[j];
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const rr = a.r + b.r;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= rr * rr || d2 === 0) continue;
+        const d = Math.sqrt(d2);
+        const nx = dx / d, nz = dz / d;
+        const ia = 1 / a.m, ib = 1 / b.m;
+        // separar
+        const pen = rr - d;
+        const ca = (pen * ia) / (ia + ib), cb = (pen * ib) / (ia + ib);
+        a.x -= nx * ca; a.z -= nz * ca;
+        b.x += nx * cb; b.z += nz * cb;
+        const rv = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
+        if (rv >= 0) continue;
+        const e = Math.min(a.e, b.e);
+        const J = (-(1 + e) * rv) / (ia + ib);
+        a.vx -= J * ia * nx; a.vz -= J * ia * nz;
+        b.vx += J * ib * nx; b.vz += J * ib * nz;
+        // giro visual por la componente tangencial
+        const tv = (b.vx - a.vx) * -nz + (b.vz - a.vz) * nx;
+        a.spin += (tv * 0.3) / a.r; b.spin -= (tv * 0.3) / b.r;
+        if (a.kind === KIND.BALL || b.kind === KIND.BALL) this.ballTouched = true;
+        if (ev) this.events.push({ type: 'hit', speed: -rv, a, b });
+      }
+    }
+    // Choques con las bandas
+    for (const b of B) {
+      for (const w of this.walls) {
+        const [x1, z1, x2, z2] = w;
+        const ex = x2 - x1, ez = z2 - z1;
+        const len2 = ex * ex + ez * ez;
+        let t = ((b.x - x1) * ex + (b.z - z1) * ez) / len2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const px = x1 + ex * t, pz = z1 + ez * t;
+        const dx = b.x - px, dz = b.z - pz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= b.r * b.r) continue;
+        const d = Math.sqrt(d2) || 1e-9;
+        const nx = dx / d, nz = dz / d;
+        b.x = px + nx * b.r;
+        b.z = pz + nz * b.r;
+        const vn = b.vx * nx + b.vz * nz;
+        if (vn < 0) {
+          const e = w[4] ? 0.2 : WALL_E[b.kind];
+          b.vx -= (1 + e) * vn * nx;
+          b.vz -= (1 + e) * vn * nz;
+          if (ev) this.events.push({ type: w[4] ? 'net' : 'wall', speed: -vn, a: b, x: px, z: pz });
+        }
+      }
+    }
+    for (const b of B) this.contain(b);
+    // ¿Gol? El garbanzo tiene que cruzar entero la línea
+    const ball = this.ball;
+    if (ball && !this.goal && Math.abs(ball.x) < this.f.goalW / 2) {
+      const hl = this.f.L / 2;
+      if (ball.z > hl + ball.r) this.goal = { scorer: 1 }; // en la portería del jugador
+      else if (ball.z < -hl - ball.r) this.goal = { scorer: 0 };
+      if (this.goal && ev) this.events.push({ type: 'goal', scorer: this.goal.scorer });
+    }
+  }
+
+  stopAll() {
+    for (const b of this.bodies) { b.vx = 0; b.vz = 0; }
+  }
+}
+
+// Alineación inicial: 4 chapas + portero por equipo. kickoff = equipo que saca.
+export function setupMatch(world, kickoff = 0) {
+  world.bodies = [];
+  world.ball = null;
+  world.goal = null;
+  const hl = world.f.L / 2;
+  for (const team of [0, 1]) {
+    const s = team === 0 ? 1 : -1; // el jugador está en z > 0
+    world.add(makeBody(KIND.KEEPER, 0, s * (hl - 0.03), team, 1));
+    const pos = [
+      [-0.13, 0.27], [0.13, 0.27], // defensas
+      [-0.09, 0.11], [0.09, 0.11], // delanteros
+    ];
+    pos.forEach(([x, z], i) => world.add(makeBody(KIND.CAP, x, s * z, team, i + 2)));
+    if (team === kickoff) {
+      // el que saca pone una chapa junto al garbanzo
+      const last = world.bodies[world.bodies.length - 1];
+      last.x = 0.0; last.z = s * 0.035;
+    }
+  }
+  world.add(makeBody(KIND.BALL, 0, 0));
+  return world;
+}
+
+export const MAX_SHOT = 2.6; // m/s
+
+export function shoot(body, vx, vz) {
+  const s = Math.hypot(vx, vz);
+  const k = s > MAX_SHOT ? MAX_SHOT / s : 1;
+  body.vx = vx * k;
+  body.vz = vz * k;
+  body.spin += (Math.random() - 0.5) * 20;
+}

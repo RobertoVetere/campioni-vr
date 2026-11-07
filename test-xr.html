@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Campioni VR — prueba con emulador</title></head>
+<body style="margin:0;background:#1b2430">
+<div id="app"></div>
+<div id="ui"><div id="xrbuttons"></div><p id="xrinfo"></p></div>
+<script type="module">
+  import { XRDevice, metaQuest3 } from 'iwer';
+  const dev = new XRDevice(metaQuest3);
+  dev.installRuntime();
+  dev.primaryInputMode = 'hand';
+  dev.position.set(0, 1.4, 0);
+  window.__dev = dev;
+  await import('/src/main.js');
+</script>
+</body></html>

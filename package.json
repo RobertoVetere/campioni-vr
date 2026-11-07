@@ -6,7 +6,7 @@
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.mjs"
   },
   "repository": {
     "type": "git",
@@ -22,6 +22,7 @@
     "three": "^0.187.0"
   },
   "devDependencies": {
+    "iwer": "^2.8.0",
     "puppeteer-core": "^25.16.0",
     "vite": "^8.3.6"
   },
