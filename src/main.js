@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.js';
-import { World, setupMatch, shoot, MAX_SHOT, FIELD, BALL_TYPES } from './physics.js';
+import { World, setupMatch, shoot, MAX_SHOT, FIELD, BALL_TYPES, MAGNET } from './physics.js';
 import { buildArena } from './arena.js';
 import { think } from './ai.js';
 import { buildTable, buildCap, buildBall, buildShadow, textPanel, makeButton, TEAMS } from './visuals.js';
@@ -10,13 +10,23 @@ import { initAudio, hitSound, flickSound, goalSound, buttonSound, whistle, crowd
 
 // ---------- Ajustes de juego ----------
 const GOALS_TO_WIN = 3;
-const FLICK_MIN = 0.3; // m/s de la punta del dedo para que cuente como "toque"
-const FLICK_GAIN = 1.3; // velocidad de la chapa = velocidad del dedo × esto
+// Toque con el dedo. El visor ve la punta del dedo a 60-90 Hz y suavizada, así que un toque
+// de uña real (muy rápido y corto) le llega mucho más lento. Por eso usamos la velocidad PUNTA
+// y una curva de potencia: toque suave = pase corto, toque rápido = tiro a tope.
+const FLICK_MIN = 0.22; // m/s de la punta del dedo para que cuente como toque
+const FLICK_FULL = 1.1; // m/s de dedo (medidos) que ya dan la potencia máxima
+const SHOT_MIN = 0.45; // m/s: lo mínimo que sale una chapa con un toque válido
+const FINGER_POWER = { suave: 0.75, normal: 1, fuerte: 1.35 };
+function flickPower(fingerSpeed) {
+  const k = Math.min(1, Math.max(0, (fingerSpeed - FLICK_MIN) / (FLICK_FULL - FLICK_MIN)));
+  const v = SHOT_MIN + (MAX_SHOT - SHOT_MIN) * Math.pow(k, 0.8);
+  return Math.min(MAX_SHOT, v * (FINGER_POWER[settings.finger] || 1));
+}
 const SLING_GAIN = 11; // tirachinas: m/s por metro de estirón
 const PINCH_ON = 0.018, PINCH_OFF = 0.035;
 
 // ---------- Opciones (se recuerdan en este navegador) ----------
-const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night' };
+const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('campioni') || '{}')); } catch (e) { /* sin almacenamiento */ }
 function saveSettings() { try { localStorage.setItem('campioni', JSON.stringify(settings)); } catch (e) { /* nada */ } }
 
@@ -137,6 +147,15 @@ function rebuildBodies() {
     const m = b.kind === 'ball' ? buildBall(b) : buildCap(b);
     shadowsOn(m);
     m.userData.flip = 0;
+    m.userData.phase = Math.random() * 6.28;
+    if (b.kind !== 'ball') {
+      // radio de alcance del imán (se ve en tu turno; más fuerte en la chapa seleccionada)
+      const R = b.r + (b.kind === 'keeper' ? MAGNET.reach * 0.6 : MAGNET.reach);
+      const reach = new THREE.Mesh(new THREE.RingGeometry(R - 0.0012, R, 40), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, toneMapped: false }));
+      reach.rotation.x = -Math.PI / 2; reach.position.y = 0.0007;
+      m.add(reach);
+      m.userData.reach = reach;
+    }
     bodyLayer.add(m);
     meshes.push(m);
   }
@@ -157,6 +176,15 @@ function syncMeshes(dt) {
       m.userData.flip += (target - m.userData.flip) * Math.min(1, dt * 10);
       m.rotation.x = m.userData.flip * Math.PI;
       m.position.y = m.userData.flip * (m.userData.h || 0.0065);
+      // "vida": respiran y se inclinan un poco hacia el balón cuando están quietas (solo visual)
+      if (!b.flipped && b.vx === 0 && b.vz === 0 && world.ball) {
+        const tt = performance.now() / 1000 + m.userData.phase;
+        const dx = world.ball.x - b.x, dz = world.ball.z - b.z, d = Math.hypot(dx, dz) || 1;
+        const lean = Math.max(0, 1 - d / 0.25) * 0.09;
+        m.position.y += 0.0006 + Math.sin(tt * 2.1) * 0.0006;
+        m.rotation.x += (dz / d) * lean + Math.sin(tt * 1.3) * 0.015;
+        m.rotation.z = -(dx / d) * lean + Math.cos(tt * 1.7) * 0.015;
+      } else m.rotation.z = 0;
     }
     if (b.kind === 'ball') {
       const s = Math.hypot(b.vx, b.vz);
@@ -236,13 +264,13 @@ function shown(o) {
 // ---------- Menú (se abre con el botón MENÚ, todo se pulsa con el dedo) ----------
 let menuOpen = false;
 const menu = new THREE.Group();
-menu.position.set(0, 0.13, FIELD.L / 2 - 0.1);
-menu.rotation.x = -0.35;
+menu.position.set(0, 0.36, FIELD.L / 2 - 0.02); // flota por encima de la mesa, a la vista
+menu.rotation.x = -0.12;
 menu.visible = false;
 root.add(menu);
 {
-  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.345), new THREE.MeshBasicMaterial({ color: 0x0b1118, transparent: true, opacity: 0.88 }));
-  bg.position.y = -0.022;
+  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.39), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false }));
+  bg.position.y = -0.045;
   bg.position.z = -0.003;
   menu.add(bg);
 }
@@ -271,8 +299,9 @@ menuItem(2, () => `Ambiente grada: ${settings.crowd ? 'SÍ' : 'NO'}`, () => { se
 menuItem(3, () => `Gradas: ${settings.stands ? 'SÍ' : 'NO'}`, () => { settings.stands = !settings.stands; stadium.group.visible = settings.stands; saveSettings(); });
 menuItem(4, () => `Balón: ${BALL_TYPES[settings.ball].name}`, () => setBall(ballKeys[(ballKeys.indexOf(settings.ball) + 1) % ballKeys.length]));
 menuItem(5, () => `Cielo (VR): ${settings.sky === 'night' ? 'NOCHE' : 'ATARDECER'}`, () => { settings.sky = settings.sky === 'night' ? 'sunset' : 'night'; applySky(); saveSettings(); });
-menuItem(6, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
-function openMenu() { menuOpen = true; menu.visible = true; aim.visible = false; }
+menuItem(6, () => `Fuerza del dedo: ${settings.finger.toUpperCase()}`, () => { const o = ['suave', 'normal', 'fuerte']; settings.finger = o[(o.indexOf(settings.finger) + 1) % 3]; saveSettings(); });
+menuItem(7, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
+function openMenu() { menuOpen = true; menu.visible = true; aim.visible = false; for (const it of menuItems) it.userData.relabel(); }
 function closeMenu() { menuOpen = false; menu.visible = false; }
 function exitGame() {
   closeMenu();
@@ -369,6 +398,28 @@ function snapshot() {
 }
 
 let freeKick = false;
+let lastFlick = '';
+let selected = null; // chapa elegida por el jugador para el siguiente toque
+let lockedCap = null; // en tiro libre o penalti solo puede tirar esta
+
+function select(b) {
+  if (!b || selected === b) return;
+  selected = b;
+  buttonSound();
+}
+
+// aparta las chapas que estén en un círculo (para colocar faltas y penaltis)
+function clearSpot(x, z, rad, keep) {
+  for (const b of world.bodies) {
+    if (keep.includes(b)) continue;
+    const dx = b.x - x, dz = b.z - z, d = Math.hypot(dx, dz);
+    if (d < rad + b.r) {
+      const k = (rad + b.r + 0.004) / (d || 1);
+      b.x = x + (d ? dx : 1) * k; b.z = z + (d ? dz : 0) * k;
+      b.x = Math.max(-FIELD.W / 2 + b.r, Math.min(FIELD.W / 2 - b.r, b.x));
+    }
+  }
+}
 
 function startMatch() {
   score = [0, 0];
@@ -397,13 +448,56 @@ function startFreeKick(team) {
     if (d < bd) { bd = d; best = b; }
   }
   if (!best) { giveTurn(team); return; }
+  // la chapa se pone directamente detrás del balón, mirando a la portería rival
+  const back = team === 0 ? 1 : -1;
+  best.x = ball.x; best.z = ball.z + back * (best.r + ball.r + 0.004);
+  best.x = Math.max(-FIELD.W / 2 + best.r, Math.min(FIELD.W / 2 - best.r, best.x));
+  clearSpot(ball.x, ball.z, 0.035, [best, ball]);
   best.flipped = true;
+  best.locked = true;
+  lockedCap = best;
+  selected = team === 0 ? best : null;
   freeKick = true;
   turn = team;
   touchesLeft = 1;
   touchInfo = `TIRO LIBRE · ${TEAMS[team].name}`;
   if (team === 0) { state = 'aim'; say('Tiro libre: dale a la chapa volteada, el balón sale por el aire'); }
   else { state = 'cpu'; timer = 1.0; cpuGen = null; cpuShot = null; say('Tiro libre del rival…'); }
+  drawBoard();
+}
+
+// Penalti: falta dentro del área que ataca el equipo que la recibe
+function inAttackArea(team, p) {
+  if (!p) return false;
+  const lineZ = team === 0 ? -FIELD.L / 2 : FIELD.L / 2;
+  return Math.abs(p.x) < (FIELD.goalW + 0.14) / 2 && Math.abs(p.z - lineZ) < 0.12;
+}
+function startPenalty(team) {
+  for (const b of world.bodies) { b.flipped = false; b.locked = false; b.vx = b.vz = 0; }
+  const dir = team === 0 ? -1 : 1; // hacia dónde ataca
+  const spotZ = dir * (FIELD.L / 2 - 0.09);
+  const ball = world.ball;
+  ball.x = 0; ball.z = spotZ; ball.y = 0; ball.vy = 0;
+  let kicker = null, bd = Infinity;
+  for (const b of world.bodies) if (b.team === team && b.kind === 'cap') { const d = Math.hypot(b.x, b.z - spotZ); if (d < bd) { bd = d; kicker = b; } }
+  kicker.x = 0; kicker.z = spotZ - dir * (kicker.r + ball.r + 0.025);
+  const keeper = world.bodies.find((b) => b.team !== team && b.kind === 'keeper');
+  keeper.x = 0; keeper.z = dir * (FIELD.L / 2 - keeper.r - 0.002);
+  // todos los demás fuera del área
+  const lineZ = dir * FIELD.L / 2;
+  for (const b of world.bodies) {
+    if (b === kicker || b === keeper || b === ball) continue;
+    if (Math.abs(b.z - lineZ) < 0.13 && Math.abs(b.x) < (FIELD.goalW + 0.14) / 2 + b.r) b.z = lineZ - dir * (0.13 + b.r);
+  }
+  kicker.locked = true;
+  lockedCap = kicker;
+  selected = team === 0 ? kicker : null;
+  freeKick = true; // un único toque especial
+  turn = team; touchesLeft = 1;
+  whistle('goal');
+  touchInfo = `¡PENALTI! · ${TEAMS[team].name}`;
+  if (team === 0) { state = 'aim'; say('Penalti: chuta con la chapa del punto'); }
+  else { state = 'cpu'; timer = 1.4; cpuGen = null; cpuShot = null; say('Penalti para el rival…'); }
   drawBoard();
 }
 
@@ -417,6 +511,7 @@ function setBall(type) {
 
 function giveTurn(team, touches = TOUCHES) {
   turn = team;
+  if (team !== 0) selected = null;
   touchesLeft = touches;
   nextTouch();
 }
@@ -425,7 +520,7 @@ function nextTouch() {
   touchInfo = `${turn === 0 ? 'TÚ' : 'RIVAL'} · TOQUE ${n}/${TOUCHES}`;
   if (turn === 0) {
     state = 'aim';
-    say(touchesLeft > 1 ? 'Aproxima: dale con el dedo a una chapa azul' : '¡Ahora tira!');
+    say(touchesLeft > 1 ? 'Toca una chapa azul para elegirla y luego dale' : (lastFlick ? `¡Ahora tira! · ${lastFlick}` : '¡Ahora tira! (o pasa a otra chapa)'));
   } else {
     state = 'cpu'; timer = 0.7; cpuGen = null; cpuShot = null;
     say(touchesLeft > 1 ? 'El rival prepara la jugada…' : 'El rival va a tirar…');
@@ -493,7 +588,7 @@ function updateGame(dt) {
       drawBoard();
     } else if (world.settled() || timer > 10) {
       world.stopAll();
-      if (freeKick) { freeKick = false; for (const b of world.bodies) b.flipped = false; }
+      if (freeKick) { freeKick = false; lockedCap = null; for (const b of world.bodies) { b.flipped = false; b.locked = false; } }
       if (world.foul !== null) {
         // falta: se acaba el turno y saca el rival
         state = 'foul';
@@ -508,7 +603,11 @@ function updateGame(dt) {
     }
   } else if (state === 'foul') {
     timer -= dt;
-    if (timer <= 0) startFreeKick(1 - world.foul);
+    if (timer <= 0) {
+      const team = 1 - world.foul;
+      if (inAttackArea(team, world.foulAt)) startPenalty(team);
+      else startFreeKick(team);
+    }
   } else if (state === 'goal') {
     timer -= dt;
     if (timer <= 0) {
@@ -603,38 +702,56 @@ function pushHist(hist, now, p) {
   while (hist.length && now - hist[0].t > 120) hist.shift();
 }
 function velOf(hist, now) {
-  // velocidad comparando con la muestra de hace ~50 ms (suaviza el temblor)
-  if (hist.length < 2) return null;
-  const cur = hist[hist.length - 1];
-  let old = hist[0];
-  for (const h of hist) if (now - h.t >= 45) old = h;
-  const dt = (cur.t - old.t) / 1000;
-  if (dt < 0.012) return null;
-  return { vx: (cur.x - old.x) / dt, vz: (cur.z - old.z) / dt, old };
+  // velocidad PUNTA de los últimos ~90 ms (entre muestras de 2 en 2 para quitar temblor)
+  if (hist.length < 3) return null;
+  let best = null, bs = 0;
+  for (let i = 2; i < hist.length; i++) {
+    const a = hist[i - 2], b = hist[i];
+    if (now - b.t > 90) continue;
+    const dt = (b.t - a.t) / 1000;
+    if (dt < 0.008) continue;
+    const vx = (b.x - a.x) / dt, vz = (b.z - a.z) / dt, sp = Math.hypot(vx, vz);
+    if (sp > bs) { bs = sp; best = { vx, vz }; }
+  }
+  if (!best) return null;
+  const old = hist[Math.max(0, hist.length - 4)];
+  return { vx: best.vx, vz: best.vz, old };
 }
 
 function myCapNear(x, z, maxD) {
   let best = null, bd = maxD;
   for (const b of world.bodies) {
     if (b.team !== 0 || menuOpen) continue;
-    if (freeKick && !b.flipped) continue;
+    if (lockedCap && b !== lockedCap) continue;
     const d = Math.hypot(b.x - x, b.z - z) - b.r;
     if (d < bd) { bd = d; best = b; }
   }
   return best;
 }
 
-function tryFlick(p, vel, capH = 0.03) {
-  if (!vel || p.y > capH || p.y < -0.02) return false;
+function tryFlick(p, vel, capH = 0.04) {
+  if (!vel || p.y > capH || p.y < -0.025) return false;
   const s = Math.hypot(vel.vx, vel.vz);
+  const touching = myCapNear(p.x, p.z, 0.004);
+  if (touching && touching !== selected) { select(touching); return true; }
   if (s < FLICK_MIN) return false;
-  const b = myCapNear(p.x, p.z, 0.012);
+  const b = myCapNear(p.x, p.z, 0.016);
   if (!b) return false;
+  // primero hay que elegir la chapa: tocarla la selecciona, sin disparar
+  if (b !== selected) { select(b); return true; }
   // el dedo tiene que venir hacia la chapa, no alejarse
   const dNow = Math.hypot(b.x - p.x, b.z - p.z), dOld = Math.hypot(b.x - vel.old.x, b.z - vel.old.z);
   if (dOld <= dNow) return false;
-  const k = Math.min(MAX_SHOT, s * FLICK_GAIN) / s;
-  fire(b, vel.vx * k, vel.vz * k);
+  // dirección: mezcla de hacia dónde va el dedo y la línea dedo→centro de la chapa (por dónde golpea)
+  let dx = vel.vx / s, dz = vel.vz / s;
+  const cx = b.x - p.x, cz = b.z - p.z, cl = Math.hypot(cx, cz);
+  if (cl > 1e-4) { dx = dx * 0.6 + (cx / cl) * 0.4; dz = dz * 0.6 + (cz / cl) * 0.4; }
+  const dl = Math.hypot(dx, dz) || 1;
+  const power = flickPower(s);
+  fire(b, (dx / dl) * power, (dz / dl) * power);
+  // medida visible para calibrar con el visor
+  lastFlick = `dedo ${s.toFixed(2).replace('.', ',')} m/s → chapa ${power.toFixed(2).replace('.', ',')} m/s`;
+  touchInfo = lastFlick; drawBoard();
   return true;
 }
 
@@ -642,7 +759,7 @@ function slingUpdate(holder, pinchOn, p) {
   // pellizcar cerca de una chapa, estirar hacia atrás y soltar
   if (!holder.sling && pinchOn && p && p.y < 0.07) {
     const b = myCapNear(p.x, p.z, 0.025);
-    if (b) holder.sling = { b };
+    if (b) { select(b); holder.sling = { b }; }
   }
   if (holder.sling) {
     const b = holder.sling.b;
@@ -746,7 +863,13 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     if (o) { buttonSound(); o.userData.onPress(); return; }
   }
   mouse.down = true;
-  if (state === 'aim') slingUpdate(mouse, true, pointerTable(e));
+  if (state === 'aim') {
+    const pt = pointerTable(e);
+    const b = pt && myCapNear(pt.x, pt.z, 0.006);
+    // con el ratón: primer clic elige la chapa, el siguiente arrastra para tirar
+    if (b && b !== selected) { select(b); mouse.down = false; return; }
+    if (b === selected) slingUpdate(mouse, true, pt);
+  }
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
   if (mouse.down && state === 'aim') slingUpdate(mouse, true, pointerTable(e));
@@ -843,8 +966,14 @@ renderer.setAnimationLoop((t) => {
   // aros de "te toca"
   const pulse = 0.35 + 0.25 * Math.sin(t / 250);
   world.bodies.forEach((b, i) => {
-    const g = meshes[i]?.userData.glow;
-    if (g) g.material.opacity = state === 'aim' && b.team === 0 ? pulse : 0;
+    const ud = meshes[i]?.userData;
+    if (!ud) return;
+    const mine = state === 'aim' && b.team === 0 && (!lockedCap || b === lockedCap);
+    if (ud.glow) {
+      ud.glow.material.opacity = mine ? (b === selected ? 0.95 : pulse * 0.6) : 0;
+      ud.glow.material.color.set(b === selected ? 0xffe066 : 0x8fffb0);
+    }
+    if (ud.reach) ud.reach.material.opacity = mine ? (b === selected ? 0.55 : 0.18) : (world.owner === b ? 0.35 : 0);
   });
   renderer.render(scene, camera);
 });
@@ -866,4 +995,4 @@ setupXRButtons();
 window.__campioni = { root, renderer, camera, applySky,
   tipWorld: (i) => { const j = hands[i].hand.joints?.['index-finger-tip']; if (!j || !j.visible) return null; const v = new THREE.Vector3(); j.getWorldPosition(v); return v.toArray(); },
   toWorld: (x, y, z) => root.localToWorld(new THREE.Vector3(x, y, z)).toArray(),
-  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };
+  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, get selected() { return selected; }, select, startPenalty, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };

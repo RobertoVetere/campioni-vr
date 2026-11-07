@@ -15,7 +15,7 @@ function candidates(world, team) {
   // el portero solo sale si el garbanzo está cerca de casa
   let mine = world.bodies.filter((b) => b.team === team && (b.kind !== KIND.KEEPER || ballNearHome));
   // en un tiro libre solo puede tirar la chapa volteada
-  const flipped = world.bodies.filter((b) => b.team === team && b.flipped);
+  const flipped = world.bodies.filter((b) => b.team === team && (b.flipped || b.locked));
   if (flipped.length) mine = flipped;
   for (const c of mine) {
     // punto "de billar": detrás del garbanzo según la línea garbanzo→portería

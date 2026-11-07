@@ -201,3 +201,24 @@ test('en tiro libre la CPU solo tira con la chapa volteada', () => {
   const shot = thinkSync(w, 1, { noise: 0 });
   assert.equal(w.bodies[shot.body], c);
 });
+
+test('imán: un pase lento que llega al radio de una chapa se queda pegado a ella', () => {
+  const w = new World();
+  const ball = w.add(makeBody(KIND.BALL, 0, 0.1));
+  const mate = w.add(makeBody(KIND.CAP, 0.0, -0.05, 0));
+  ball.vz = -0.75; // pase suave hacia el compañero
+  run(w);
+  const d = Math.hypot(ball.x - mate.x, ball.z - mate.z) - mate.r - ball.r;
+  assert.ok(d < 0.002, `distancia al compañero ${d}`);
+  assert.equal(w.owner, mate);
+  assert.ok(w.settled());
+});
+
+test('imán: un balón rápido pasa de largo sin pegarse', () => {
+  const w = new World();
+  const ball = w.add(makeBody(KIND.BALL, 0, 0.3));
+  w.add(makeBody(KIND.CAP, 0.04, 0.1, 0));
+  ball.vz = -2.0;
+  for (let t = 0; t < 0.15; t += 1 / 60) w.step(1 / 60);
+  assert.ok(ball.z < 0.05, `debe seguir su camino: ${ball.z}`);
+});

@@ -38,6 +38,10 @@ export const HEIGHT = { cap: 0.0065, keeper: 0.024 };
 export const CROSSBAR = 0.035;
 const LIFT = 0.55; // con la chapa volteada, parte del golpe se convierte en altura
 
+// Imán de posesión (como en el Subbuteo): un balón lento que entra en el radio de una chapa
+// se queda pegado a ella. Así los pases "llegan" y no todo es un rebote en disputa.
+export const MAGNET = { reach: 0.03, maxSpeed: 0.38, pull: 260, damp: 22 };
+
 export function makeBody(kind, x, z, team = -1, num = 0) {
   const p = PROPS[kind];
   return { kind, team, num, x, z, y: 0, vx: 0, vz: 0, vy: 0, r: p.r, m: p.m, mu: p.mu, e: p.e, angle: 0, spin: 0, roll: 0, flipped: false };
@@ -70,6 +74,9 @@ export class World {
     this.ballTouched = false;
     this.shotTeam = null; // equipo que acaba de tirar (para pitar faltas)
     this.foul = null; // equipo que ha cometido falta en este tiro
+    this.foulAt = null; // dónde fue la falta {x, z}
+    this.owner = null; // chapa que tiene el balón pegado
+    this.magnet = true;
     this.events = [];
   }
 
@@ -185,6 +192,7 @@ export class World {
         // Falta: tu chapa toca una rival antes de que el garbanzo se haya movido
         else if (a.team !== b.team && this.shotTeam !== null && !this.ballTouched && this.foul === null) {
           this.foul = this.shotTeam;
+          this.foulAt = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
           if (ev) this.events.push({ type: 'foul', team: this.shotTeam, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 });
         }
         if (ev) this.events.push({ type: 'hit', speed: -rv, a, b });
@@ -217,6 +225,7 @@ export class World {
         }
       }
     }
+    if (this.magnet) this.applyMagnet(h, ev);
     for (const b of B) this.contain(b);
     // dentro de la portería, el techo de la red
     const bl = this.ball;
@@ -231,6 +240,30 @@ export class World {
     }
   }
 
+  applyMagnet(h, ev) {
+    const ball = this.ball;
+    if (!ball || ball.y > 0.001) return;
+    const sp = Math.hypot(ball.vx, ball.vz);
+    if (sp > MAGNET.maxSpeed) { if (sp > MAGNET.maxSpeed * 1.5) this.owner = null; return; }
+    let best = null, bd = MAGNET.reach;
+    for (const c of this.bodies) {
+      if (c === ball || c.flipped) continue;
+      const reach = c.kind === 'keeper' ? MAGNET.reach * 0.6 : MAGNET.reach;
+      const d = Math.hypot(ball.x - c.x, ball.z - c.z) - c.r - ball.r;
+      if (d < reach && d < bd) { bd = d; best = c; }
+    }
+    if (!best) return;
+    // punto de contacto en el lado donde está el balón
+    const dx = ball.x - best.x, dz = ball.z - best.z, dl = Math.hypot(dx, dz) || 1;
+    const tx = best.x + (dx / dl) * (best.r + ball.r + 0.0005), tz = best.z + (dz / dl) * (best.r + ball.r + 0.0005);
+    ball.vx += ((tx - ball.x) * MAGNET.pull - ball.vx * MAGNET.damp) * h;
+    ball.vz += ((tz - ball.z) * MAGNET.pull - ball.vz * MAGNET.damp) * h;
+    if (Math.hypot(tx - ball.x, tz - ball.z) < 0.004 && Math.hypot(ball.vx, ball.vz) < 0.06) {
+      ball.x = tx; ball.z = tz; ball.vx = 0; ball.vz = 0;
+    }
+    if (this.owner !== best) { this.owner = best; if (ev) this.events.push({ type: 'control', a: best }); }
+  }
+
   stopAll() {
     for (const b of this.bodies) { b.vx = 0; b.vz = 0; b.vy = 0; b.y = 0; }
   }
@@ -242,6 +275,8 @@ export function setupMatch(world, kickoff = 0, ballType = 'garbanzo') {
   world.ball = null;
   world.goal = null;
   world.foul = null;
+  world.foulAt = null;
+  world.owner = null;
   world.shotTeam = null;
   world.ballTouched = false;
   const hl = world.f.L / 2;

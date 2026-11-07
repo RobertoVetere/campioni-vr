@@ -350,7 +350,9 @@ export function textPanel(w, h, pxPerM = 1600) {
   c.width = Math.round(w * pxPerM); c.height = Math.round(h * pxPerM);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  // toneMapped: false para que los paneles (marcador, botones, menú) no salgan apagados por el filtro de cine
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false }));
+  mesh.renderOrder = 5;
   mesh.userData.draw = (fn) => { const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height); fn(g, c.width, c.height); tex.needsUpdate = true; };
   return mesh;
 }

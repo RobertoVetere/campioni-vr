@@ -6,6 +6,7 @@ export function initAudio() {
   if (!ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (AC) ctx = new AC();
+    if (ctx) { loadSample('musica'); loadSample('gol'); loadSample('grada'); }
   }
   if (ctx && ctx.state === 'suspended') ctx.resume();
 }
@@ -174,15 +175,15 @@ export function crowdOn() {
 export function crowdVolume(v) {
   if (!crowd) return;
   crowd.level = v;
-  crowd.master.gain.setTargetAtTime(v * 0.022, ctx.currentTime, 0.4);
+  crowd.master.gain.setTargetAtTime(v * 0.035, ctx.currentTime, 0.4);
 }
 // la grada se viene arriba un momento (gol, ocasión)
 export function crowdSwell(k = 1) {
   if (!crowd || crowd.level === 0) return;
   const t = ctx.currentTime;
   crowd.master.gain.cancelScheduledValues(t);
-  crowd.master.gain.setTargetAtTime(0.022 * (1 + 3 * k), t, 0.08);
-  crowd.master.gain.setTargetAtTime(0.022, t + 1.8, 0.8);
+  crowd.master.gain.setTargetAtTime(0.035 * (1 + 3 * k), t, 0.08);
+  crowd.master.gain.setTargetAtTime(0.035, t + 1.8, 0.8);
 }
 
 // ---------- Sintonía: rock épico de anime de los 80 (original) ----------
@@ -270,7 +271,15 @@ export function musicOn() { return !!music; }
 export function toggleMusic(force) {
   if (!ctx) return false;
   const want = force ?? !music;
-  if (!want && music) { clearInterval(music.timer); music.out.gain.setTargetAtTime(0, ctx.currentTime, 0.1); music = null; return false; }
+  if (!want && music) { clearInterval(music.timer); music.out.gain.setTargetAtTime(0, ctx.currentTime, 0.1); if (music.stop) music.stop(); music = null; return false; }
+  if (want && !music && samples.musica) {
+    // si hay una canción de verdad en public/sounds/musica.mp3, suena esa en bucle
+    const out = ctx.createGain(); out.gain.value = 0.35; out.connect(ctx.destination);
+    const src = ctx.createBufferSource(); src.buffer = samples.musica; src.loop = true;
+    src.connect(out); src.start();
+    music = { out, timer: null, stop: () => src.stop(ctx.currentTime + 0.3) };
+    return true;
+  }
   if (want && !music) {
     const out = ctx.createGain(); out.gain.value = 0.085; out.connect(ctx.destination);
     const rhythm = makeAmp(out, 18, 2600, 0.22); // power chords
