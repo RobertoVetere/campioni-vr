@@ -30,6 +30,12 @@ export function createGhostHand() {
   thumb.userData.len = 0.045;
 
   function pose(name) {
+    if (name === 'pinch') {
+      // índice y pulgar juntos, el resto relajados
+      fingers.forEach((f, i) => { f.scale.z = f.userData.len * (i === 1 ? 0.75 : 0.9); f.rotation.x = i === 1 ? -1.0 : -0.25; });
+      thumb.scale.z = thumb.userData.len; thumb.rotation.y = -1.15;
+      return;
+    }
     fingers.forEach((f, i) => {
       const ext = name === 'flat' || (name === 'point' && i === 1);
       f.scale.z = ext ? f.userData.len : f.userData.len * 0.35;

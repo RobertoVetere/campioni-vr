@@ -38,7 +38,7 @@ export const HEIGHT = { cap: 0.0065, keeper: 0.032 };
 
 // Portero de futbolín: va en una barra y solo se mueve a lo ancho de su portería.
 // El tuyo lo mueves tú con la palanca (tx); el del rival lo lleva el ordenador (auto).
-export const KEEPER = { range: 0.1, handSpeed: 1.6, autoSpeed: 0.42 };
+export const KEEPER = { range: 0.1, depth: 0.1, handSpeed: 1.6, autoSpeed: 0.42 };
 const DRAG_SPEED = 0.55; // m/s: velocidad máxima de una chapa llevada con la palma (conduce sin chutar)
 export const CROSSBAR = 0.035;
 const LIFT = 0.55; // con la chapa volteada, parte del golpe se convierte en altura
@@ -154,12 +154,17 @@ export class World {
     // porteros en su barra (cinemáticos: empujan, pero nada los empuja)
     for (const k of B) {
       if (!k.kin) continue;
-      if (k.auto) k.tx = this.autoKeeperTarget(k);
-      const want = Math.max(-KEEPER.range, Math.min(KEEPER.range, k.tx ?? k.x));
+      if (k.auto) { const tg = this.autoKeeperTarget(k); k.tx = tg[0]; k.tz = tg[1]; }
+      // se mueve a lo ancho de la portería y hacia delante por el área (para salir a despejar)
+      const wantX = Math.max(-KEEPER.range, Math.min(KEEPER.range, k.tx ?? k.x));
+      const fwd = -Math.sign(k.homeZ); // hacia el campo
+      const ahead = Math.max(0, Math.min(KEEPER.depth, ((k.tz ?? k.homeZ) - k.homeZ) * fwd));
+      const wantZ = k.homeZ + fwd * ahead;
+      const dx = wantX - k.x, dz = wantZ - k.z, d = Math.hypot(dx, dz);
       const max = (k.auto ? KEEPER.autoSpeed : KEEPER.handSpeed) * h;
-      const step = Math.max(-max, Math.min(max, want - k.x));
-      k.x += step; k.z = k.homeZ;
-      k.vx = Math.abs(step) > 1e-7 ? step / h : 0; k.vz = 0;
+      const f = d > max ? max / d : 1;
+      k.x += dx * f; k.z += dz * f;
+      k.vx = d > 1e-7 ? (dx * f) / h : 0; k.vz = d > 1e-7 ? (dz * f) / h : 0;
     }
     // Rozamiento de Coulomb (tapete) + algo de amortiguación
     for (const b of B) {
@@ -306,13 +311,20 @@ export class World {
   // portero del ordenador: se coloca donde va a llegar el balón (con su velocidad limitada)
   autoKeeperTarget(k) {
     const ball = this.ball;
-    if (!ball) return 0;
+    if (!ball) return [0, k.homeZ];
     const towards = Math.sign(k.homeZ) * ball.vz > 0.15;
     if (towards) {
       const t = (k.homeZ - ball.z) / ball.vz;
-      if (t > 0 && t < 2) return ball.x + ball.vx * t;
+      if (t > 0 && t < 2) return [ball.x + ball.vx * t, k.homeZ];
     }
-    return ball.x * 0.45;
+    // balón muerto (lento) dentro de su área: sale a por él y lo despeja empujándolo hacia el campo
+    const line = Math.sign(k.homeZ) * (this.f.L / 2);
+    const inArea = Math.abs(ball.z - line) < 0.12 && Math.abs(ball.x) < (this.f.goalW + 0.14) / 2;
+    if (inArea && Math.hypot(ball.vx, ball.vz) < 0.3 && !ball.y) {
+      const back = Math.sign(k.homeZ) * (k.r + ball.r) * 0.6;
+      return [ball.x, ball.z + back];
+    }
+    return [ball.x * 0.45, k.homeZ];
   }
 
   applyMagnet(h, ev) {

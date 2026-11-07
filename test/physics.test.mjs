@@ -359,3 +359,22 @@ test('penalti con puntería asistida: al centro para el portero, a la esquina es
   assert.equal(shot(24), true, 'a la esquina entra');
   assert.equal(shot(-24), true, 'a la otra esquina entra');
 });
+
+test('portero: con la palanca también se mueve hacia delante por el área (y no más allá)', () => {
+  const w = setupMatch(new World(), 0);
+  const k = w.bodies.find((b) => b.kin && b.team === 0);
+  k.tx = 0.03; k.tz = k.homeZ - 0.3; // pide salir 30 cm: se queda en el límite del área
+  for (let t = 0; t < 0.6; t += 1 / 60) w.step(1 / 60);
+  assert.ok(Math.abs(k.homeZ - k.z - 0.1) < 0.002, `adelantado ${(k.homeZ - k.z).toFixed(3)}`);
+  assert.ok(Math.abs(k.x - 0.03) < 0.002);
+});
+
+test('portero automático: sale a despejar un balón parado en su área', () => {
+  const w = setupMatch(new World(), 0);
+  for (const b of w.bodies) if (b.kind === 'cap') b.x = (b.x > 0 ? 1 : -1) * 0.25;
+  const ball = w.ball;
+  ball.x = 0.03; ball.z = -0.37; // dentro del área rival, quieto
+  for (let t = 0; t < 2; t += 1 / 60) w.step(1 / 60); // el juego sigue simulando entre turnos
+  assert.ok(ball.z > -0.32, `el balón sigue en el área: z=${ball.z.toFixed(3)}`);
+  assert.equal(w.goal, null);
+});

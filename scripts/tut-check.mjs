@@ -20,6 +20,7 @@ const steps = await p.evaluate(async () => {
   const c = g.world.bodies.find((x) => x.team === 0 && x.kind === 'cap' && x !== g.selected);
   g.select(c); out.push('tras elegir -> paso ' + (g.tut.step + 1));
   g.tutEvent('drag'); out.push('tras arrastrar -> paso ' + (g.tut.step + 1));
+  g.tutEvent('shot_high'); out.push('evento fuera de orden -> paso ' + (g.tut.step + 1));
   return out;
 });
 await new Promise((r) => setTimeout(r, 1500));
@@ -27,9 +28,11 @@ await p.screenshot({ path: '/tmp/claude-0/sp/tut-3.png' });
 const end = await p.evaluate(async () => {
   const g = window.__campioni;
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const sel = g.selected; g.fire(g.world.bodies.indexOf(sel), 0, -0.6, true);
-  await wait(200);
+  const sel = g.selected; g.fire(g.world.bodies.indexOf(sel), 0, -0.6, true); // tiro raso
+  await wait(2500);
+  g.tutEvent('shot_high');
   g.tutEvent('lever');
+  g.tutEvent('lever_fwd');
   const fin = g.tut && g.tut.fin > 0;
   await wait(4000);
   return { fin, modo: g.mode, estado: g.state, hecho: g.progress.tutorialDone };
