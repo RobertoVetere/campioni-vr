@@ -113,10 +113,21 @@ export function buildTable() {
     bar.rotation.z = Math.PI / 2;
     bar.position.set(0, ph, s * L / 2);
     g.add(bar);
-    const net = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.35 });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(goalW, ph, goalD, 12, 3, 4), net);
-    box.position.set(0, ph / 2, s * (L / 2 + goalD / 2));
-    g.add(box);
+    // red: fondo, laterales y techo. La boca queda ABIERTA para que se vea entrar el garbanzo
+    const net = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(goalW, ph, 12, 3), net);
+    back.position.set(0, ph / 2, s * (L / 2 + goalD));
+    g.add(back);
+    for (const x of [-goalW / 2, goalW / 2]) {
+      const side = new THREE.Mesh(new THREE.PlaneGeometry(goalD, ph, 4, 3), net);
+      side.rotation.y = Math.PI / 2;
+      side.position.set(x, ph / 2, s * (L / 2 + goalD / 2));
+      g.add(side);
+    }
+    const roof = new THREE.Mesh(new THREE.PlaneGeometry(goalW, goalD, 12, 4), net);
+    roof.rotation.x = Math.PI / 2;
+    roof.position.set(0, ph, s * (L / 2 + goalD / 2));
+    g.add(roof);
     // fondo de la red con algo de cuerpo para que la física se vea coherente
     addBox(goalW + 0.004, 0.003, 0, s * (L / 2 + goalD), new THREE.MeshStandardMaterial({ color: 0xdddddd }), 0.01);
     addBox(0.003, goalD, -goalW / 2, s * (L / 2 + goalD / 2), new THREE.MeshStandardMaterial({ color: 0xdddddd }), 0.006);

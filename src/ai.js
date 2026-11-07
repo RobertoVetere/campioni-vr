@@ -45,13 +45,16 @@ function evaluate(world, team, cand) {
   const body = w.bodies[cand.body];
   body.vx = cand.vx; body.vz = cand.vz;
   w.ballTouched = false;
+  w.shotTeam = team;
+  w.foul = null;
   let t = 0;
   while (t < SIM_MAX && !w.goal) {
     w.step(SIM_DT, false);
     t += SIM_DT;
     if (w.settled()) break;
   }
-  if (w.goal) return w.goal.scorer === team ? 1000 : -1000;
+  if (w.goal) return (w.goal.scorer === team ? 1000 : -1000) - (w.foul !== null ? 1500 : 0);
+  const foulPen = w.foul !== null ? 200 : 0;
   const b = w.ball;
   const hl = w.f.L / 2;
   let score = (b.z - startZ) * dir * 100; // avance del garbanzo
@@ -60,6 +63,7 @@ function evaluate(world, team, cand) {
   const distOwn = Math.hypot(b.x, -dir * hl - b.z);
   if (distOwn < 0.2) score -= (0.2 - distOwn) * 300; // no dejarlo cerca de casa
   if (!w.ballTouched) score -= 15;
+  score -= foulPen;
   // no dejar la chapa tirada en campo propio lejos de todo
   return score;
 }

@@ -42,6 +42,7 @@ function wallSegments(f) {
     s.push([-hw, z, -gw, z], [gw, z, hw, z]); // fondo a los lados de la portería
     s.push([-gw, z, -gw, zb, 1], [gw, z, gw, zb, 1]); // laterales de la red (no rebotan)
     s.push([-gw, zb, gw, zb, 1]); // fondo de la red
+    s.push([-gw, z, gw, z, 2]); // línea de gol: frena las chapas, el garbanzo la cruza
   }
   return s;
 }
@@ -54,6 +55,8 @@ export class World {
     this.ball = null;
     this.goal = null; // {scorer} cuando entra
     this.ballTouched = false;
+    this.shotTeam = null; // equipo que acaba de tirar (para pitar faltas)
+    this.foul = null; // equipo que ha cometido falta en este tiro
     this.events = [];
   }
 
@@ -97,7 +100,7 @@ export class World {
     const hw = W / 2 - b.r, hl = L / 2, gw = goalW / 2 - b.r;
     if (b.x > hw) { b.x = hw; if (b.vx > 0) b.vx = -b.vx * 0.5; }
     if (b.x < -hw) { b.x = -hw; if (b.vx < 0) b.vx = -b.vx * 0.5; }
-    const inMouth = Math.abs(b.x) <= gw;
+    const inMouth = b.kind === KIND.BALL && Math.abs(b.x) <= gw; // solo el garbanzo entra en la portería
     const zmax = inMouth ? hl + goalD - b.r : hl - b.r;
     if (Math.abs(b.z) > hl - b.r && !inMouth) {
       // fuera de la boca: o está en el campo o dentro de la red
@@ -149,12 +152,18 @@ export class World {
         const tv = (b.vx - a.vx) * -nz + (b.vz - a.vz) * nx;
         a.spin += (tv * 0.3) / a.r; b.spin -= (tv * 0.3) / b.r;
         if (a.kind === KIND.BALL || b.kind === KIND.BALL) this.ballTouched = true;
+        // Falta: tu chapa toca una rival antes de que el garbanzo se haya movido
+        else if (a.team !== b.team && this.shotTeam !== null && !this.ballTouched && this.foul === null) {
+          this.foul = this.shotTeam;
+          if (ev) this.events.push({ type: 'foul', team: this.shotTeam, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 });
+        }
         if (ev) this.events.push({ type: 'hit', speed: -rv, a, b });
       }
     }
     // Choques con las bandas
     for (const b of B) {
       for (const w of this.walls) {
+        if (w[4] === 2 && b.kind === KIND.BALL) continue;
         const [x1, z1, x2, z2] = w;
         const ex = x2 - x1, ez = z2 - z1;
         const len2 = ex * ex + ez * ez;
@@ -170,10 +179,10 @@ export class World {
         b.z = pz + nz * b.r;
         const vn = b.vx * nx + b.vz * nz;
         if (vn < 0) {
-          const e = w[4] ? 0.2 : WALL_E[b.kind];
+          const e = w[4] === 1 ? 0.2 : w[4] === 2 ? 0.5 : WALL_E[b.kind];
           b.vx -= (1 + e) * vn * nx;
           b.vz -= (1 + e) * vn * nz;
-          if (ev) this.events.push({ type: w[4] ? 'net' : 'wall', speed: -vn, a: b, x: px, z: pz });
+          if (ev) this.events.push({ type: w[4] === 1 ? 'net' : w[4] === 2 ? 'post' : 'wall', speed: -vn, a: b, x: px, z: pz });
         }
       }
     }
@@ -198,6 +207,9 @@ export function setupMatch(world, kickoff = 0) {
   world.bodies = [];
   world.ball = null;
   world.goal = null;
+  world.foul = null;
+  world.shotTeam = null;
+  world.ballTouched = false;
   const hl = world.f.L / 2;
   for (const team of [0, 1]) {
     const s = team === 0 ? 1 : -1; // el jugador está en z > 0

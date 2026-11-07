@@ -121,3 +121,38 @@ test('la CPU no saca al portero cuando el garbanzo está lejos de su portería',
     assert.notEqual(w.bodies[shot.body].kind, KIND.KEEPER);
   }
 });
+
+test('una chapa no puede meterse en la portería, el garbanzo sí', () => {
+  const w = new World();
+  const c = w.add(makeBody(KIND.CAP, 0, -0.38, 0));
+  c.vz = -2;
+  run(w);
+  assert.ok(c.z >= -FIELD.L / 2 + c.r - 1e-6, `chapa dentro: ${c.z}`);
+  const w2 = new World();
+  const b = w2.add(makeBody(KIND.BALL, 0, -0.38));
+  b.vz = -2;
+  run(w2);
+  assert.deepEqual(w2.goal, { scorer: 0 });
+});
+
+test('falta: tu chapa toca una rival antes que el garbanzo', () => {
+  const w = new World();
+  w.add(makeBody(KIND.BALL, 0.2, 0));
+  const a = w.add(makeBody(KIND.CAP, 0, 0.1, 0));
+  w.add(makeBody(KIND.CAP, 0, 0.0, 1));
+  w.shotTeam = 0;
+  a.vz = -1.5;
+  run(w);
+  assert.equal(w.foul, 0);
+});
+
+test('no es falta si tocas antes el garbanzo y luego una rival', () => {
+  const w = new World();
+  w.add(makeBody(KIND.BALL, 0, 0.05));
+  const a = w.add(makeBody(KIND.CAP, 0, 0.1, 0));
+  w.add(makeBody(KIND.CAP, 0.0, -0.06, 1));
+  w.shotTeam = 0;
+  a.vz = -1.8;
+  run(w);
+  assert.equal(w.foul, null);
+});

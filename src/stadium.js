@@ -1,43 +1,92 @@
 // Estadio en miniatura alrededor del campo, en low poly facetado:
-// gradas escalonadas, público animado (salta con los goles), focos, banderas y rótulo.
-// El lado cercano al jugador se deja libre para que pueda meter la mano.
+// gradas por los cuatro lados (la tuya, baja y solo detrás de la portería, para poder meter la mano),
+// techos, público animado que salta con los goles, focos, banderas y vallas LED con texto en movimiento.
 import * as THREE from 'three';
 import { FIELD } from './physics.js';
 import { TEAMS } from './visuals.js';
 
 const flat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.85, ...extra });
 
+function ledTexture() {
+  const c = document.createElement('canvas');
+  c.width = 2048; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = '#05070a'; g.fillRect(0, 0, c.width, c.height);
+  const ads = [['★ CAMPIONI ★', '#ffd34d'], ['GARBANZO FC', '#7dffa1'], ['CHAPAS DE ORO', '#ffffff'], ['TAPÓN & CELO', '#6ea2ff'], ['¡FORZA!', '#ff6b7d']];
+  g.font = '900 44px system-ui, sans-serif'; g.textBaseline = 'middle';
+  let x = 20;
+  while (x < c.width) {
+    for (const [t, col] of ads) {
+      g.fillStyle = col; g.fillText(t, x, 34);
+      x += g.measureText(t).width + 60;
+      if (x > c.width) break;
+    }
+  }
+  g.fillStyle = 'rgba(0,0,0,0.35)';
+  for (let i = 0; i < c.width; i += 4) g.fillRect(i, 0, 1, c.height);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
+  return t;
+}
+
 export function buildStadium() {
   const { L, W, goalD } = FIELD;
   const g = new THREE.Group();
   const people = []; // {x,y,z,ry,team,phase}
-  const tierD = 0.03, tierH = 0.016, seatGap = 0.0125;
-  const concrete = flat(0x9aa3ad), seatA = flat(0x2c4f9e), seatB = flat(0x9e2c3c);
+  const tierD = 0.028, tierH = 0.016, seatGap = 0.0125;
+  const concrete = flat(0x9aa3ad), seatA = flat(0x2c4f9e), seatB = flat(0x9e2c3c), roofMat = flat(0xc3ccd6, { side: THREE.DoubleSide });
+  const steel = flat(0x5b6570);
 
-  // Grada recta a lo largo de un eje. dir apunta HACIA FUERA del campo.
-  function stand(cx, cz, length, along, dirX, dirZ, tiers, teamFn) {
+  // Grada recta. (cx,cz) = punto del borde del campo; dir apunta HACIA FUERA.
+  function stand(cx, cz, length, along, dirX, dirZ, tiers, teamFn, roof, start = 0.035) {
     for (let t = 0; t < tiers; t++) {
       const h = tierH * (t + 1);
-      const off = 0.035 + tierD * t + tierD / 2;
+      const off = start + tierD * t + tierD / 2;
       const geo = along === 'z' ? new THREE.BoxGeometry(tierD, h, length) : new THREE.BoxGeometry(length, h, tierD);
-      const m = new THREE.Mesh(geo, t % 2 ? concrete : t === 0 ? seatA : seatB);
+      const m = new THREE.Mesh(geo, t % 2 ? concrete : (t / 2) % 2 ? seatB : seatA);
       m.position.set(cx + dirX * off, h / 2, cz + dirZ * off);
       g.add(m);
       const n = Math.floor(length / seatGap);
       for (let i = 0; i < n; i++) {
-        if (Math.random() < 0.12) continue; // algún asiento vacío
+        if (Math.random() < 0.1) continue; // algún asiento vacío
         const s = -length / 2 + (i + 0.5) * seatGap + (Math.random() - 0.5) * 0.003;
         const px = along === 'z' ? m.position.x : cx + s;
         const pz = along === 'z' ? cz + s : m.position.z;
         people.push({ x: px, y: h, z: pz, ry: Math.atan2(-dirX, -dirZ), team: teamFn(px, pz), phase: Math.random() * 6.28 });
       }
     }
+    // pared trasera
+    const backOff = start + tierD * tiers + 0.002;
+    const bh = tierH * tiers + 0.02;
+    const wallGeo = along === 'z' ? new THREE.BoxGeometry(0.004, bh, length) : new THREE.BoxGeometry(length, bh, 0.004);
+    const wall = new THREE.Mesh(wallGeo, concrete);
+    wall.position.set(cx + dirX * backOff, bh / 2, cz + dirZ * backOff);
+    g.add(wall);
+    if (roof) {
+      // techo voladizo inclinado sobre las filas de atrás
+      const depth = tierD * tiers * 0.42;
+      const rg = along === 'z' ? new THREE.BoxGeometry(depth, 0.003, length * 1.02) : new THREE.BoxGeometry(length * 1.02, 0.003, depth);
+      const r = new THREE.Mesh(rg, roofMat);
+      const ro = backOff - depth / 2;
+      r.position.set(cx + dirX * ro, bh + 0.035, cz + dirZ * ro);
+      if (along === 'z') r.rotation.z = dirX * 0.12; else r.rotation.x = -dirZ * 0.12;
+      g.add(r);
+      for (let i = 0; i <= 4; i++) {
+        const s = -length / 2 + (i / 4) * length;
+        const p = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.035 + 0.004, 0.003), steel);
+        p.position.set(along === 'z' ? cx + dirX * backOff : cx + s, bh + 0.0175, along === 'z' ? cz + s : cz + dirZ * backOff);
+        g.add(p);
+      }
+    }
   }
-  const sideTeam = () => (Math.random() < 0.5 ? 0 : 1);
-  stand(-W / 2, 0, L * 0.92, 'z', -1, 0, 2, sideTeam);
-  stand(W / 2, 0, L * 0.92, 'z', 1, 0, 2, sideTeam);
-  // fondo lejano: la grada del rival, más alta, detrás de su portería
-  stand(0, -L / 2 - goalD + 0.005, W * 0.95, 'x', 0, -1, 3, () => (Math.random() < 0.85 ? 1 : 0));
+  const mixed = () => (Math.random() < 0.5 ? 0 : 1);
+  stand(-W / 2, 0, L * 0.95, 'z', -1, 0, 3, mixed, true);
+  stand(W / 2, 0, L * 0.95, 'z', 1, 0, 3, mixed, true);
+  // fondo lejano: la grada del rival, la más alta
+  stand(0, -L / 2 - goalD, W * 0.98, 'x', 0, -1, 4, () => (Math.random() < 0.85 ? 1 : 0), true, 0.03);
+  // tu fondo: baja y estrecha, detrás de tu portería (los tuyos)
+  stand(0, L / 2 + goalD, W * 0.42, 'x', 0, 1, 1, () => (Math.random() < 0.9 ? 0 : 1), false, 0.03);
 
   // Público: dos InstancedMesh (cuerpo + cabeza) con colores de equipo
   const bodyGeo = new THREE.BoxGeometry(0.0075, 0.011, 0.005);
@@ -54,45 +103,48 @@ export function buildStadium() {
   });
   g.add(bodies, heads);
 
+  // Vallas LED a ras de campo con texto que se desplaza
+  const led = ledTexture();
+  const ledMat = new THREE.MeshBasicMaterial({ map: led });
+  const ledH = 0.014;
+  const addLed = (len, x, z, ry) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(len, ledH), ledMat);
+    m.position.set(x, 0.0175 + ledH / 2, z);
+    m.rotation.y = ry;
+    g.add(m);
+  };
+  led.repeat.set(1.2, 1);
+  addLed(L * 0.9, -W / 2 - 0.024, 0, Math.PI / 2);
+  addLed(L * 0.9, W / 2 + 0.024, 0, -Math.PI / 2);
+  addLed(W * 0.9, 0, -L / 2 - goalD - 0.018, 0);
+
   // Focos en las cuatro esquinas
-  const pole = flat(0x5b6570);
   const lamp = flat(0xfff6d5, { emissive: 0xfff2b0, emissiveIntensity: 1.2 });
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const x = sx * (W / 2 + 0.11), z = sz * (L / 2 + 0.06);
-    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.005, 0.2, 6), pole);
-    p.position.set(x, 0.1, z);
+    const x = sx * (W / 2 + 0.13), z = sz * (L / 2 + 0.08);
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.005, 0.24, 6), steel);
+    p.position.set(x, 0.12, z);
     g.add(p);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.028, 0.006), lamp);
-    head.position.set(x, 0.205, z);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.006), lamp);
+    head.position.set(x, 0.245, z);
     head.lookAt(0, 0, 0);
     g.add(head);
   }
 
   // Banderas en lo alto de la grada lejana
   const flags = [];
+  const farBack = -L / 2 - goalD - 0.03 - tierD * 4;
   for (const [i, x] of [-W * 0.35, 0, W * 0.35].entries()) {
-    const fp = new THREE.Mesh(new THREE.CylinderGeometry(0.0012, 0.0012, 0.06, 5), pole);
-    const base = new THREE.Vector3(x, 0.048 + 0.03, -L / 2 - goalD - 0.035 - tierD * 2.5);
-    fp.position.copy(base);
+    const fp = new THREE.Mesh(new THREE.CylinderGeometry(0.0012, 0.0012, 0.07, 5), steel);
+    fp.position.set(x, tierH * 4 + 0.055 + 0.035, farBack);
     g.add(fp);
-    const team = i === 1 ? 1 : i % 2;
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.03, 0.018, 4, 1), flat(TEAMS[team].shirt, { side: THREE.DoubleSide }));
-    flag.position.set(x + 0.015, base.y + 0.02, base.z);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.03, 0.018, 4, 1), flat(TEAMS[i === 1 ? 1 : 0].shirt, { side: THREE.DoubleSide }));
+    flag.position.set(x + 0.015, fp.position.y + 0.025, farBack);
+    flag.geometry.translate(0.015, 0, 0);
+    flag.position.x = x;
     g.add(flag);
     flags.push(flag);
   }
-
-  // Rótulo CAMPIONI en la fachada de la grada lejana
-  const c = document.createElement('canvas');
-  c.width = 1024; c.height = 128;
-  const x2 = c.getContext('2d');
-  x2.fillStyle = '#111a24'; x2.fillRect(0, 0, 1024, 128);
-  x2.font = 'bold 92px system-ui, sans-serif'; x2.textAlign = 'center'; x2.textBaseline = 'middle';
-  x2.fillStyle = '#ffd34d'; x2.fillText('★ CAMPIONI ★', 512, 68);
-  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-  const sign2 = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.33, W * 0.041), new THREE.MeshBasicMaterial({ map: tex }));
-  sign2.position.set(0, 0.062, -L / 2 - goalD - 0.02);
-  g.add(sign2);
 
   // Animación
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), up = new THREE.Vector3(0, 1, 0);
@@ -111,7 +163,8 @@ export function buildStadium() {
     }
     bodies.instanceMatrix.needsUpdate = true;
     heads.instanceMatrix.needsUpdate = true;
-    flags.forEach((f, i) => { f.rotation.y = Math.sin(t * 2.2 + i) * 0.35; });
+    flags.forEach((f, i) => { f.rotation.y = Math.sin(t * 2.2 + i) * 0.4; });
+    led.offset.x = (t * 0.05) % 1;
   }
   update(0, 0);
   return { group: g, update, cheer: (team) => { cheer[team] = 3; }, count: people.length };
