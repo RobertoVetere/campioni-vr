@@ -788,7 +788,12 @@ function segDist(ax, az, bx, bz, px, pz) {
 function tryFlick(p, vel, prev, capH = 0.06) {
   if (!vel || p.y > capH || p.y < -0.05) return false;
   const s = Math.hypot(vel.vx, vel.vz);
-  if (s < FLICK_MIN) return false;
+  if (s < FLICK_MIN) {
+    // dedo posado despacio sobre otra chapa: la elige, sin moverla
+    const t = myCapNear(p.x, p.z, 0.003);
+    if (t && t !== selected && t.kind === 'cap') select(t);
+    return false;
+  }
   const a = prev || p;
   let b = null, bd = Infinity;
   for (const c of world.bodies) {
