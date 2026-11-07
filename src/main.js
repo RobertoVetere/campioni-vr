@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.js';
-import { World, setupMatch, shoot, MAX_SHOT, FIELD } from './physics.js';
+import { World, setupMatch, shoot, MAX_SHOT, FIELD, BALL_TYPES } from './physics.js';
+import { buildArena } from './arena.js';
 import { think } from './ai.js';
 import { buildTable, buildCap, buildBall, buildShadow, textPanel, makeButton, TEAMS } from './visuals.js';
 import { buildStadium } from './stadium.js';
 import { createEffects } from './effects.js';
-import { initAudio, hitSound, flickSound, goalSound, buttonSound, whistle, crowdOn, toggleMusic, musicOn } from './audio.js';
+import { initAudio, hitSound, flickSound, goalSound, buttonSound, whistle, crowdOn, crowdVolume, toggleMusic, musicOn } from './audio.js';
 
 // ---------- Ajustes de juego ----------
 const GOALS_TO_WIN = 3;
@@ -14,6 +15,11 @@ const FLICK_GAIN = 1.3; // velocidad de la chapa = velocidad del dedo × esto
 const SLING_GAIN = 11; // tirachinas: m/s por metro de estirón
 const PINCH_ON = 0.018, PINCH_OFF = 0.035;
 
+// ---------- Opciones (se recuerdan en este navegador) ----------
+const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo' };
+try { Object.assign(settings, JSON.parse(localStorage.getItem('campioni') || '{}')); } catch (e) { /* sin almacenamiento */ }
+function saveSettings() { try { localStorage.setItem('campioni', JSON.stringify(settings)); } catch (e) { /* nada */ } }
+
 // ---------- Escena ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -21,36 +27,57 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
 document.getElementById('app').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 const bgColor = new THREE.Color(0x1b2430);
 scene.background = bgColor;
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 50);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 1000);
 camera.position.set(0, 1.22, 0.78);
 camera.lookAt(0, 0.8, -0.12);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x445544, 1.1));
-const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-sun.position.set(0.6, 2, 0.8);
-scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x2a3a2a, 0.75));
 
-// Habitación sencilla para modo VR / escritorio (en realidad mixta se oculta y ves tu casa)
-const room = new THREE.Group();
-const floor = new THREE.Mesh(new THREE.CircleGeometry(4, 48), new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 1, flatShading: true }));
-floor.rotation.x = -Math.PI / 2;
-room.add(floor);
+// Estadio a tamaño real alrededor (VR completa y escritorio; en realidad mixta ves tu casa)
+const arena = buildArena();
+const room = arena.group;
 scene.add(room);
 
 // Todo lo de la mesa cuelga de "root": se puede recolocar y subir/bajar
 const root = new THREE.Group();
 root.position.set(0, 0.8, 0);
 scene.add(root);
+// Luz principal tipo foco de estadio, con sombras reales. Cuelga de la mesa para seguirla.
+const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
+sun.position.set(0.5, 1.4, 0.35);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -0.6, right: 0.6, top: 0.7, bottom: -0.7, near: 0.2, far: 3 });
+sun.shadow.bias = -0.0008;
+sun.shadow.normalBias = 0.002;
+root.add(sun, sun.target);
+const rim = new THREE.DirectionalLight(0x9fc3ff, 0.8); // contraluz frío desde el fondo
+rim.position.set(-0.6, 0.9, -1.0);
+root.add(rim, rim.target);
+function shadowsOn(obj) {
+  obj.traverse((o) => {
+    if (!o.isMesh || o.material?.transparent || o.material?.isMeshBasicMaterial) return;
+    o.castShadow = true; o.receiveShadow = true;
+  });
+}
+
 const table = buildTable();
 root.add(table);
+shadowsOn(table);
 const cushions = table.userData.cushions;
 const stadium = buildStadium();
 root.add(stadium.group);
+shadowsOn(stadium.group);
+stadium.group.visible = settings.stands;
 const effects = createEffects([TEAMS[0].shirt, TEAMS[1].shirt]);
 root.add(effects.group);
 function flashCushion(x, z, speed) {
@@ -102,6 +129,8 @@ function rebuildBodies() {
     bodyLayer.add(s);
     shadows.push(s);
     const m = b.kind === 'ball' ? buildBall(b) : buildCap(b);
+    shadowsOn(m);
+    m.userData.flip = 0;
     bodyLayer.add(m);
     meshes.push(m);
   }
@@ -112,8 +141,17 @@ const tmpAxis = new THREE.Vector3(), tmpQ = new THREE.Quaternion();
 function syncMeshes(dt) {
   world.bodies.forEach((b, i) => {
     const m = meshes[i];
-    m.position.set(b.x, 0, b.z);
+    m.position.set(b.x, b.y || 0, b.z);
     shadows[i].position.set(b.x + 0.002, 0.0004, b.z + 0.002);
+    shadows[i].scale.setScalar(1 + (b.y || 0) * 30);
+    shadows[i].material.opacity = 0.5 / (1 + (b.y || 0) * 60);
+    if (b.kind !== 'ball') {
+      // volteo animado para el tiro libre
+      const target = b.flipped ? 1 : 0;
+      m.userData.flip += (target - m.userData.flip) * Math.min(1, dt * 10);
+      m.rotation.x = m.userData.flip * Math.PI;
+      m.position.y = m.userData.flip * (m.userData.h || 0.0065);
+    }
     if (b.kind === 'ball') {
       const s = Math.hypot(b.vx, b.vz);
       if (s > 0 && dt > 0) {
@@ -163,9 +201,6 @@ function drawBoard() {
     g.font = `${Math.round(h * 0.12)}px system-ui, sans-serif`;
     g.fillStyle = '#ffffff';
     g.fillText(message, w / 2, h * 0.84);
-    // rejilla de píxeles
-    g.fillStyle = 'rgba(0,0,0,0.18)';
-    for (let y = 0; y < h; y += 4) g.fillRect(0, y, w, 1);
   });
 }
 function say(m) { if (m !== message) { message = m; drawBoard(); } }
@@ -184,8 +219,60 @@ const nearZ = FIELD.L / 2 + 0.07;
 addButton('▲', FIELD.W / 2 - 0.02, 0.03, nearZ, () => (root.position.y += 0.02), { w: 0.04, color: '#444c58' });
 addButton('▼', FIELD.W / 2 - 0.07, 0.03, nearZ, () => (root.position.y -= 0.02), { w: 0.04, color: '#444c58' });
 addButton('AQUÍ', FIELD.W / 2 - 0.13, 0.03, nearZ, () => (placeRequested = true), { w: 0.06, color: '#444c58' });
-addButton('♪', -FIELD.W / 2 + 0.03, 0.03, nearZ, () => { musicWanted = toggleMusic(); }, { w: 0.04, color: '#7a4fd1' });
+addButton('MENÚ', -FIELD.W / 2 + 0.045, 0.03, nearZ, () => (menuOpen ? closeMenu() : openMenu()), { w: 0.07, color: '#7a4fd1' });
 const playBtn = addButton('JUGAR', 0, 0.09, 0.05, () => startMatch(), { w: 0.14, h: 0.05, color: '#1f8a3e', tilt: -0.2 });
+
+function shown(o) {
+  for (let p = o; p; p = p.parent) if (!p.visible) return false;
+  return true;
+}
+
+// ---------- Menú (se abre con el botón MENÚ, todo se pulsa con el dedo) ----------
+let menuOpen = false;
+const menu = new THREE.Group();
+menu.position.set(0, 0.13, FIELD.L / 2 - 0.1);
+menu.rotation.x = -0.35;
+menu.visible = false;
+root.add(menu);
+{
+  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.3), new THREE.MeshBasicMaterial({ color: 0x0b1118, transparent: true, opacity: 0.88 }));
+  bg.position.z = -0.003;
+  menu.add(bg);
+}
+const ballKeys = Object.keys(BALL_TYPES);
+const menuItems = [];
+function menuItem(i, labelFn, onPress, color = '#2f3a48') {
+  const make = () => makeButton(labelFn(), 0.21, 0.034, color);
+  const b = make();
+  b.position.set(0, 0.115 - i * 0.045, 0);
+  b.userData.onPress = () => { onPress(); relabel(); };
+  const relabel = () => {
+    const nb = make();
+    b.remove(b.userData.panel);
+    b.add(nb.userData.panel);
+    b.userData.panel = nb.userData.panel;
+  };
+  b.userData.relabel = relabel;
+  menu.add(b);
+  buttons.push(b);
+  menuItems.push(b);
+  return b;
+}
+menuItem(0, () => '▶  Seguir jugando', () => closeMenu(), '#1f8a3e');
+menuItem(1, () => `Música: ${settings.music ? 'SÍ' : 'NO'}`, () => { settings.music = !settings.music; toggleMusic(settings.music); saveSettings(); });
+menuItem(2, () => `Ambiente grada: ${settings.crowd ? 'SÍ' : 'NO'}`, () => { settings.crowd = !settings.crowd; crowdOn(); crowdVolume(settings.crowd ? 1 : 0); saveSettings(); });
+menuItem(3, () => `Gradas: ${settings.stands ? 'SÍ' : 'NO'}`, () => { settings.stands = !settings.stands; stadium.group.visible = settings.stands; saveSettings(); });
+menuItem(4, () => `Balón: ${BALL_TYPES[settings.ball].name}`, () => setBall(ballKeys[(ballKeys.indexOf(settings.ball) + 1) % ballKeys.length]));
+menuItem(5, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
+function openMenu() { menuOpen = true; menu.visible = true; aim.visible = false; }
+function closeMenu() { menuOpen = false; menu.visible = false; }
+function exitGame() {
+  closeMenu();
+  toggleMusic(false);
+  const session = renderer.xr.getSession();
+  if (session) session.end();
+  else { state = 'menu'; ui.style.display = ''; playBtn.visible = true; say('Pulsa JUGAR con el dedo'); }
+}
 
 // ---------- Flecha de puntería (tirachinas) ----------
 const aim = new THREE.Group();
@@ -257,7 +344,6 @@ const confetti = (() => {
 // menu | aim | cpu | moving | foul | goal | replay | end
 const TOUCHES = 2; // toque de aproximación + toque de tiro
 let state = 'menu';
-let musicWanted = true;
 let turn = 0;
 let touchesLeft = TOUCHES;
 let timer = 0;
@@ -269,21 +355,56 @@ let rec = [];
 let replayT = 0;
 let recFps = 60;
 function snapshot() {
-  const f = new Float32Array(world.bodies.length * 3);
-  world.bodies.forEach((b, i) => { f[i * 3] = b.x; f[i * 3 + 1] = b.z; f[i * 3 + 2] = b.angle; });
+  const f = new Float32Array(world.bodies.length * 4);
+  world.bodies.forEach((b, i) => { f[i * 4] = b.x; f[i * 4 + 1] = b.z; f[i * 4 + 2] = b.angle; f[i * 4 + 3] = b.y || 0; });
   return f;
 }
 
+let freeKick = false;
+
 function startMatch() {
   score = [0, 0];
-  setupMatch(world, 0);
+  freeKick = false;
+  setupMatch(world, 0, settings.ball);
   rebuildBodies();
   playBtn.visible = false;
+  closeMenu();
   if (!renderer.xr.isPresenting) ui.style.display = 'none';
   whistle('short');
   crowdOn();
-  if (musicWanted) toggleMusic(true);
+  crowdVolume(settings.crowd ? 1 : 0);
+  if (settings.music) toggleMusic(true);
   giveTurn(0);
+}
+
+// Tiro libre: la chapa del equipo que recibió la falta más cercana al balón se da la vuelta.
+// Con la chapa volteada, el balón sale por el aire según la fuerza del toque.
+function startFreeKick(team) {
+  for (const b of world.bodies) b.flipped = false;
+  const ball = world.ball;
+  let best = null, bd = Infinity;
+  for (const b of world.bodies) {
+    if (b.team !== team || b.kind !== 'cap') continue;
+    const d = Math.hypot(b.x - ball.x, b.z - ball.z);
+    if (d < bd) { bd = d; best = b; }
+  }
+  if (!best) { giveTurn(team); return; }
+  best.flipped = true;
+  freeKick = true;
+  turn = team;
+  touchesLeft = 1;
+  touchInfo = `TIRO LIBRE · ${TEAMS[team].name}`;
+  if (team === 0) { state = 'aim'; say('Tiro libre: dale a la chapa volteada, el balón sale por el aire'); }
+  else { state = 'cpu'; timer = 1.0; cpuGen = null; cpuShot = null; say('Tiro libre del rival…'); }
+  drawBoard();
+}
+
+function setBall(type) {
+  settings.ball = type; saveSettings();
+  const bt = BALL_TYPES[type];
+  const b = world.ball;
+  if (b) { b.r = bt.r; b.m = bt.m; b.mu = bt.mu; b.type = type; }
+  rebuildBodies();
 }
 
 function giveTurn(team, touches = TOUCHES) {
@@ -327,7 +448,8 @@ function afterGoalOrEnd() {
     playBtn.visible = true;
   } else {
     const conceded = 1 - world.goal.scorer;
-    setupMatch(world, conceded);
+    freeKick = false;
+    setupMatch(world, conceded, settings.ball);
     rebuildBodies();
     whistle('short');
     giveTurn(conceded);
@@ -344,7 +466,8 @@ function updateGame(dt) {
       if (e.type === 'hit') hitSound(e.speed, e.a.kind === 'ball' || e.b.kind === 'ball' ? 'ball' : 'cap');
       else if (e.type === 'wall') { hitSound(e.speed, 'wall'); flashCushion(e.x, e.z, e.speed); }
       else if (e.type === 'net' || e.type === 'post') hitSound(e.speed * 0.4, 'net');
-      else if (e.type === 'foul') { whistle('foul'); say(`¡Falta de ${TEAMS[e.team].name}!`); }
+      else if (e.type === 'foul') { whistle('foul'); say(`¡Falta de ${TEAMS[e.team].name}! Tiro libre`); }
+      else if (e.type === 'bounce') hitSound(Math.abs(e.speed) * 2, 'ball');
     }
     if (world.goal) {
       const s = world.goal.scorer;
@@ -352,6 +475,7 @@ function updateGame(dt) {
       whistle('goal');
       goalSound();
       stadium.cheer(s);
+      arena.cheer(s);
       confetti.burst(s === 0 ? -FIELD.L / 2 : FIELD.L / 2, s);
       say(s === 0 ? '¡GOOOOOOL!' : 'Gol del rival…');
       touchInfo = `${TEAMS[s].name} MARCA`;
@@ -361,6 +485,7 @@ function updateGame(dt) {
       drawBoard();
     } else if (world.settled() || timer > 10) {
       world.stopAll();
+      if (freeKick) { freeKick = false; for (const b of world.bodies) b.flipped = false; }
       if (world.foul !== null) {
         // falta: se acaba el turno y saca el rival
         state = 'foul';
@@ -375,7 +500,7 @@ function updateGame(dt) {
     }
   } else if (state === 'foul') {
     timer -= dt;
-    if (timer <= 0) giveTurn(1 - world.foul);
+    if (timer <= 0) startFreeKick(1 - world.foul);
   } else if (state === 'goal') {
     timer -= dt;
     if (timer <= 0) {
@@ -415,19 +540,19 @@ let lastFrame = null;
 function showFrame(f, dt) {
   world.bodies.forEach((b, i) => {
     const m = meshes[i];
-    const x = f[i * 3], z = f[i * 3 + 1];
+    const x = f[i * 4], z = f[i * 4 + 1], y = f[i * 4 + 3];
     if (b.kind === 'ball' && lastFrame) {
-      const dx = x - lastFrame[i * 3], dz = z - lastFrame[i * 3 + 1];
+      const dx = x - lastFrame[i * 4], dz = z - lastFrame[i * 4 + 1];
       const d = Math.hypot(dx, dz);
       if (d > 1e-6) { tmpAxis.set(dz, 0, -dx).normalize(); tmpQ.setFromAxisAngle(tmpAxis, d / b.r); m.userData.ball.quaternion.premultiply(tmpQ); }
     }
-    m.position.set(x, 0, z);
+    m.position.set(x, b.kind === 'ball' ? y : m.position.y, z);
     shadows[i].position.set(x + 0.002, 0.0004, z + 0.002);
-    if (b.kind !== 'ball') m.rotation.y = -f[i * 3 + 2];
+    if (b.kind !== 'ball') m.rotation.y = -f[i * 4 + 2];
   });
   // estelas también en la repetición (velocidad sacada de la grabación)
   if (lastFrame && lastFrame !== f) {
-    const fake = world.bodies.map((b, i) => ({ kind: b.kind, team: b.team, r: b.r, x: f[i * 3], z: f[i * 3 + 1], vx: (f[i * 3] - lastFrame[i * 3]) * recFps, vz: (f[i * 3 + 1] - lastFrame[i * 3 + 1]) * recFps }));
+    const fake = world.bodies.map((b, i) => ({ kind: b.kind, team: b.team, r: b.r, x: f[i * 4], z: f[i * 4 + 1], vx: (f[i * 4] - lastFrame[i * 4]) * recFps, vz: (f[i * 4 + 1] - lastFrame[i * 4 + 1]) * recFps }));
     effects.update(dt, fake);
   } else effects.update(dt, []);
   lastFrame = f;
@@ -483,7 +608,8 @@ function velOf(hist, now) {
 function myCapNear(x, z, maxD) {
   let best = null, bd = maxD;
   for (const b of world.bodies) {
-    if (b.team !== 0) continue;
+    if (b.team !== 0 || menuOpen) continue;
+    if (freeKick && !b.flipped) continue;
     const d = Math.hypot(b.x - x, b.z - z) - b.r;
     if (d < bd) { bd = d; best = b; }
   }
@@ -530,7 +656,7 @@ function slingUpdate(holder, pinchOn, p) {
 function pokeButtons(p, now) {
   // p en coordenadas de root
   for (const btn of buttons) {
-    if (!btn.visible) continue;
+    if (!shown(btn)) continue;
     v3.copy(p);
     root.localToWorld(v3);
     btn.worldToLocal(v3);
@@ -605,7 +731,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   initAudio();
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  const hits = ray.intersectObjects(buttons.filter((b) => b.visible), true);
+  const hits = ray.intersectObjects(buttons.filter(shown), true);
   if (hits.length) {
     let o = hits[0].object;
     while (o && !o.userData.onPress) o = o.parent;
@@ -669,6 +795,7 @@ function xrButton(label, mode, secondary) {
 function onXRStart() {
   ui.style.display = 'none';
   crowdOn();
+  crowdVolume(settings.crowd ? 1 : 0);
   const passthrough = xrMode === 'immersive-ar';
   scene.background = passthrough ? null : bgColor;
   room.visible = !passthrough;
@@ -677,6 +804,8 @@ function onXRStart() {
 }
 function onXREnd() {
   ui.style.display = '';
+  toggleMusic(false);
+  crowdVolume(0);
   scene.background = bgColor;
   room.visible = true;
   tableLegs.visible = true;
@@ -699,7 +828,8 @@ renderer.setAnimationLoop((t) => {
   confetti.update(dt);
   updateCushions(dt);
   if (state !== 'replay') effects.update(dt, world.bodies);
-  stadium.update(dt, t / 1000);
+  if (stadium.group.visible) stadium.update(dt, t / 1000);
+  if (room.visible) arena.update(dt, t / 1000);
   // aros de "te toca"
   const pulse = 0.35 + 0.25 * Math.sin(t / 250);
   world.bodies.forEach((b, i) => {
@@ -716,7 +846,7 @@ addEventListener('resize', () => {
 });
 
 // Arranque: mesa preparada para el saque y botón JUGAR
-setupMatch(world, 0);
+setupMatch(world, 0, settings.ball);
 rebuildBodies();
 say('Pulsa JUGAR con el dedo');
 drawBoard();
@@ -726,4 +856,4 @@ setupXRButtons();
 window.__campioni = { root, renderer,
   tipWorld: (i) => { const j = hands[i].hand.joints?.['index-finger-tip']; if (!j || !j.visible) return null; const v = new THREE.Vector3(); j.getWorldPosition(v); return v.toArray(); },
   toWorld: (x, y, z) => root.localToWorld(new THREE.Vector3(x, y, z)).toArray(),
-  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, startMatch, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };
+  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };

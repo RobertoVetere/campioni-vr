@@ -156,3 +156,48 @@ test('no es falta si tocas antes el garbanzo y luego una rival', () => {
   run(w);
   assert.equal(w.foul, null);
 });
+
+test('tiro libre: con la chapa volteada el balón sale por el aire y pasa por encima de una chapa', () => {
+  const w = new World();
+  const ball = w.add(makeBody(KIND.BALL, 0, 0.05));
+  const kicker = w.add(makeBody(KIND.CAP, 0, 0.08, 0));
+  const wall = w.add(makeBody(KIND.CAP, 0, -0.06, 1)); // barrera
+  kicker.flipped = true;
+  kicker.vz = -2.2;
+  let maxY = 0, touchedWall = false;
+  for (let t = 0; t < 3; t += 1 / 60) {
+    w.step(1 / 60);
+    maxY = Math.max(maxY, ball.y);
+    if (Math.hypot(wall.vx, wall.vz) > 0.05 && Math.hypot(ball.x - wall.x, ball.z - wall.z) < 0.03) touchedWall = true;
+    if (w.settled()) break;
+  }
+  assert.ok(maxY > 0.02, `altura ${maxY}`);
+  assert.ok(ball.z < -0.1, `el balón ha pasado la barrera: ${ball.z}`);
+  assert.equal(ball.y, 0, 'vuelve al suelo');
+});
+
+test('sin voltear, la misma jugada no levanta el balón', () => {
+  const w = new World();
+  const ball = w.add(makeBody(KIND.BALL, 0, 0.05));
+  const kicker = w.add(makeBody(KIND.CAP, 0, 0.08, 0));
+  kicker.vz = -2.2;
+  let maxY = 0;
+  for (let t = 0; t < 2; t += 1 / 60) { w.step(1 / 60); maxY = Math.max(maxY, ball.y); }
+  assert.equal(maxY, 0);
+});
+
+test('un balón por encima del larguero no es gol', () => {
+  const w = new World();
+  const b = w.add(makeBody(KIND.BALL, 0, -0.42));
+  b.y = 0.05; b.vy = 0.5; b.vz = -1.2;
+  for (let t = 0; t < 0.15; t += 1 / 60) w.step(1 / 60);
+  assert.equal(w.goal, null);
+});
+
+test('en tiro libre la CPU solo tira con la chapa volteada', () => {
+  const w = setupMatch(new World(), 1);
+  const c = w.bodies.find((b) => b.team === 1 && b.num === 3);
+  c.flipped = true;
+  const shot = thinkSync(w, 1, { noise: 0 });
+  assert.equal(w.bodies[shot.body], c);
+});

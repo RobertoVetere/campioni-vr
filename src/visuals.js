@@ -183,7 +183,11 @@ function crimpedSide(r, h, teeth = 11) {
   return geo;
 }
 
-const metal = new THREE.MeshStandardMaterial({ color: 0xc9ced6, metalness: 0.6, roughness: 0.45, flatShading: true });
+const metals = [
+  new THREE.MeshStandardMaterial({ color: 0xc9d3e0, metalness: 0.7, roughness: 0.35, flatShading: true }), // plateada
+  new THREE.MeshStandardMaterial({ color: 0xd8b24a, metalness: 0.7, roughness: 0.35, flatShading: true }), // dorada
+];
+const cork = new THREE.MeshStandardMaterial({ color: 0xd6c39a, roughness: 0.95, flatShading: true });
 
 export function buildCap(body) {
   const g = new THREE.Group();
@@ -204,6 +208,7 @@ export function buildCap(body) {
     g.add(top);
     g.userData.h = KEEPER_H;
   } else {
+    const metal = metals[body.team] || metals[0];
     const side = new THREE.Mesh(crimpedSide(r, CAP_H), metal);
     side.position.y = CAP_H / 2;
     g.add(side);
@@ -215,6 +220,11 @@ export function buildCap(body) {
     top.rotation.x = -Math.PI / 2;
     top.position.y = CAP_H + 0.0001;
     g.add(top);
+    // el interior (corcho) que se ve cuando la chapa está volteada para el tiro libre
+    const under = new THREE.Mesh(new THREE.CircleGeometry(r * 0.98, 22), cork);
+    under.rotation.x = Math.PI / 2;
+    under.position.y = 0.0003;
+    g.add(under);
     g.userData.h = CAP_H;
   }
   // aro de "te toca" (se enciende en tu turno)
@@ -229,19 +239,86 @@ export function buildCap(body) {
   return g;
 }
 
-export function buildBall(body) {
-  // garbanzo low poly: icosaedro facetado algo achatado, con su "pico"
-  const geo = new THREE.IcosahedronGeometry(body.r, 1);
+function garbanzoGeo(r) {
+  const geo = new THREE.IcosahedronGeometry(r, 1);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     let k = 1 + 0.05 * Math.sin(x * 1500 + z * 900);
-    if (x > body.r * 0.5 && y > 0) k += 0.22 * (x / body.r - 0.5);
+    if (x > r * 0.5 && y > 0) k += 0.22 * (x / r - 0.5);
     pos.setXYZ(i, x * k, y * k * 0.92, z * k);
   }
   geo.computeVertexNormals();
-  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xe0b878, roughness: 0.8, flatShading: true }));
-  m.position.y = body.r;
+  return geo;
+}
+
+// Pinta cada cara de un icosaedro según su dirección
+function paintedBall(r, detail, colorFor) {
+  const geo = new THREE.IcosahedronGeometry(r, detail).toNonIndexed();
+  const pos = geo.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i += 3) {
+    a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2);
+    const n = a.add(b).add(c).normalize();
+    const color = colorFor(n, i / 3);
+    for (let k = 0; k < 3; k++) col.set([color.r, color.g, color.b], (i + k) * 3);
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+const ICO_DIRS = (() => {
+  const g = new THREE.IcosahedronGeometry(1, 0);
+  const p = g.attributes.position, out = [];
+  for (let i = 0; i < p.count; i++) {
+    const v = new THREE.Vector3().fromBufferAttribute(p, i).normalize();
+    if (!out.some((o) => o.distanceTo(v) < 1e-3)) out.push(v);
+  }
+  return out;
+})();
+const nearIco = (n, th) => ICO_DIRS.some((d) => d.dot(n) > th);
+
+export function buildBall(body) {
+  const r = body.r;
+  let geo, mat;
+  const type = body.type || 'garbanzo';
+  if (type === 'clasico') {
+    // blanco con pentágonos negros (el de toda la vida)
+    const W = new THREE.Color(0xf4f4f4), B = new THREE.Color(0x151515);
+    geo = paintedBall(r, 1, (n) => (nearIco(n, 0.93) ? B : W));
+    mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, flatShading: true });
+  } else if (type === 'mundial') {
+    // blanco con trazos dorados, azules y rojos
+    const W = new THREE.Color(0xfafafa), G = new THREE.Color(0xe2b32b), Bl = new THREE.Color(0x1f5fd1), R = new THREE.Color(0xd8263a);
+    geo = paintedBall(r, 2, (n) => {
+      const sw = Math.sin(n.x * 5 + n.y * 3) + Math.cos(n.z * 6 - n.y * 2);
+      if (sw > 1.35) return G;
+      if (sw < -1.45) return Bl;
+      if (Math.abs(sw - 0.2) < 0.08) return R;
+      return W;
+    });
+    mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, flatShading: true });
+  } else if (type === 'cuero') {
+    // cuero marrón a gajos, con sus cordones
+    const tones = [0x7a4a24, 0x6b3f1e, 0x8a5629].map((c) => new THREE.Color(c));
+    geo = paintedBall(r, 1, (n, f) => {
+      const seam = Math.abs(n.x) < 0.12 || Math.abs(n.z) < 0.12;
+      return seam ? new THREE.Color(0x4a2a12) : tones[f % 3];
+    });
+    mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, flatShading: true });
+  } else {
+    geo = garbanzoGeo(r);
+    mat = new THREE.MeshStandardMaterial({ color: 0xe0b878, roughness: 0.8, flatShading: true });
+  }
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = true;
+  if (type === 'cuero') {
+    const lace = new THREE.Mesh(new THREE.BoxGeometry(r * 0.25, r * 0.12, r * 0.9), new THREE.MeshStandardMaterial({ color: 0xe8dcc0, flatShading: true }));
+    lace.position.y = r * 0.97;
+    m.add(lace);
+  }
+  m.position.y = r;
   const g = new THREE.Group();
   g.add(m);
   g.userData.ball = m;

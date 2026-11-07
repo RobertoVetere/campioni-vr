@@ -1,0 +1,19 @@
+// Comprobación rápida: la página carga, arranca un partido y abre el menú sin errores.
+import puppeteer from 'puppeteer-core';
+import { spawn } from 'child_process';
+const srv = spawn('npx', ['vite', 'preview', '--port', '4180', '--strictPort'], { cwd: new URL('..', import.meta.url).pathname });
+await new Promise((r) => setTimeout(r, 2500));
+const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', protocolTimeout: 120000, args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-proxy-server'] });
+const p = await b.newPage();
+await p.setViewport({ width: 1000, height: 700 });
+const errs = [];
+p.on('pageerror', (e) => errs.push(e.message));
+p.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('sounds/')) errs.push(m.text()); });
+await p.goto('http://localhost:4180/', { waitUntil: 'load', timeout: 60000 });
+await new Promise((r) => setTimeout(r, 2000));
+await p.evaluate(() => { const g = window.__campioni; g.startMatch(); g.setBall('mundial'); g.openMenu(); g.startFreeKick(0); });
+await new Promise((r) => setTimeout(r, 3000));
+await p.screenshot({ path: '/tmp/claude-0/sp/menu.png' });
+console.log('estado:', await p.evaluate(() => [window.__campioni.state, window.__campioni.freeKick, window.__campioni.world.ball.type].join(' ')));
+console.log('ERRORES:', errs.length ? errs.join('\n') : 'ninguno');
+await b.close(); srv.kill();

@@ -36,6 +36,27 @@ await shot('repeticion');
 states.push('marcador: ' + JSON.stringify(await ev(() => window.__campioni.score)));
 await p.waitForFunction(() => ['aim', 'cpu'].includes(window.__campioni.state), { timeout: 200000 });
 states.push('tras repetición: ' + (await ev(() => window.__campioni.state)));
+// 3) tiro libre: la chapa volteada levanta el balón
+const fk = await ev(async () => {
+  const g = window.__campioni, w = g.world;
+  w.stopAll();
+  g.startFreeKick(0);
+  const c = w.bodies.find((b) => b.flipped);
+  if (!c) return { error: 'sin chapa volteada' };
+  const ball = w.ball, dx = ball.x - c.x, dz = ball.z - c.z, d = Math.hypot(dx, dz);
+  await new Promise((r) => setTimeout(r, 600));
+  g.fire(w.bodies.indexOf(c), (dx / d) * 2.3, (dz / d) * 2.3);
+  let maxY = 0;
+  for (let i = 0; i < 60; i++) { maxY = Math.max(maxY, ball.y); await new Promise((r) => setTimeout(r, 30)); }
+  return { freeKick: true, maxY: +maxY.toFixed(3) };
+});
+states.push('tiro libre: ' + JSON.stringify(fk));
+await new Promise((r) => setTimeout(r, 400));
+await shot('tirolibre');
+// 4) menú y balón del Mundial
+await ev(() => { const g = window.__campioni; g.setBall('mundial'); g.openMenu(); });
+await new Promise((r) => setTimeout(r, 1500));
+await shot('menu');
 console.log(states.join('\n'));
 console.log('ERRORES:', errs.length ? errs.join('\n') : 'ninguno');
 await b.close(); srv.kill();

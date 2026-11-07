@@ -25,9 +25,22 @@ const PROPS = {
   ball: { r: 0.0048, m: 0.0009, mu: 0.16, e: 0.9 },
 };
 
+// Tipos de balón (se eligen en el menú). El garbanzo es el original.
+export const BALL_TYPES = {
+  garbanzo: { name: 'Garbanzo', r: 0.0048, m: 0.0009, mu: 0.16 },
+  clasico: { name: 'Balón clásico', r: 0.0065, m: 0.0012, mu: 0.12 },
+  mundial: { name: 'Balón Mundial', r: 0.0065, m: 0.0012, mu: 0.11 },
+  cuero: { name: 'Cuero histórico', r: 0.0068, m: 0.0016, mu: 0.15 },
+};
+
+// Alturas (para saber si el balón por el aire pasa por encima)
+export const HEIGHT = { cap: 0.0065, keeper: 0.024 };
+export const CROSSBAR = 0.035;
+const LIFT = 0.55; // con la chapa volteada, parte del golpe se convierte en altura
+
 export function makeBody(kind, x, z, team = -1, num = 0) {
   const p = PROPS[kind];
-  return { kind, team, num, x, z, vx: 0, vz: 0, r: p.r, m: p.m, mu: p.mu, e: p.e, angle: 0, spin: 0, roll: 0 };
+  return { kind, team, num, x, z, y: 0, vx: 0, vz: 0, vy: 0, r: p.r, m: p.m, mu: p.mu, e: p.e, angle: 0, spin: 0, roll: 0, flipped: false };
 }
 
 function wallSegments(f) {
@@ -73,7 +86,7 @@ export class World {
   }
 
   settled() {
-    return this.bodies.every((b) => b.vx === 0 && b.vz === 0);
+    return this.bodies.every((b) => b.vx === 0 && b.vz === 0 && b.y === 0 && b.vy === 0);
   }
 
   // Avanza dt segundos. Devuelve los eventos (choques y gol) ocurridos.
@@ -114,10 +127,21 @@ export class World {
     const B = this.bodies;
     // Rozamiento de Coulomb (tapete) + algo de amortiguación
     for (const b of B) {
+      // vuelo del balón (tiro libre con la chapa volteada)
+      if (b.y > 0 || b.vy !== 0) {
+        b.vy -= G * h;
+        b.y += b.vy * h;
+        if (b.y <= 0) {
+          b.y = 0;
+          if (b.vy < -0.2) { b.vy = -b.vy * 0.42; if (this.events && ev) this.events.push({ type: 'bounce', speed: b.vy, a: b }); }
+          else b.vy = 0;
+        }
+      }
+      const air = b.y > 0.0005;
       const s = Math.hypot(b.vx, b.vz);
       if (s === 0) { b.spin *= 0.9; continue; }
-      const dec = b.mu * G * h + s * 0.15 * h;
-      if (s <= dec || s < STOP_SPEED) { b.vx = 0; b.vz = 0; }
+      const dec = air ? s * 0.08 * h : b.mu * G * h + s * 0.15 * h;
+      if (!air && (s <= dec || s < STOP_SPEED)) { b.vx = 0; b.vz = 0; }
       else { const k = (s - dec) / s; b.vx *= k; b.vz *= k; }
       b.x += b.vx * h;
       b.z += b.vz * h;
@@ -134,6 +158,9 @@ export class World {
         const rr = a.r + b.r;
         const d2 = dx * dx + dz * dz;
         if (d2 >= rr * rr || d2 === 0) continue;
+        // el balón por el aire pasa por encima de lo que sea más bajo que él
+        if (a.kind === KIND.BALL && a.y > HEIGHT[b.kind]) continue;
+        if (b.kind === KIND.BALL && b.y > HEIGHT[a.kind]) continue;
         const d = Math.sqrt(d2);
         const nx = dx / d, nz = dz / d;
         const ia = 1 / a.m, ib = 1 / b.m;
@@ -148,6 +175,9 @@ export class World {
         const J = (-(1 + e) * rv) / (ia + ib);
         a.vx -= J * ia * nx; a.vz -= J * ia * nz;
         b.vx += J * ib * nx; b.vz += J * ib * nz;
+        // chapa volteada contra el balón: lo levanta según la fuerza del golpe
+        if (a.kind === KIND.BALL && b.flipped) a.vy = Math.max(a.vy, -rv * LIFT);
+        if (b.kind === KIND.BALL && a.flipped) b.vy = Math.max(b.vy, -rv * LIFT);
         // giro visual por la componente tangencial
         const tv = (b.vx - a.vx) * -nz + (b.vz - a.vz) * nx;
         a.spin += (tv * 0.3) / a.r; b.spin -= (tv * 0.3) / b.r;
@@ -163,7 +193,8 @@ export class World {
     // Choques con las bandas
     for (const b of B) {
       for (const w of this.walls) {
-        if (w[4] === 2 && b.kind === KIND.BALL) continue;
+        // la línea de gol frena chapas siempre, y el balón solo si va por encima del larguero
+        if (w[4] === 2 && b.kind === KIND.BALL && b.y + b.r < CROSSBAR) continue;
         const [x1, z1, x2, z2] = w;
         const ex = x2 - x1, ez = z2 - z1;
         const len2 = ex * ex + ez * ez;
@@ -187,6 +218,9 @@ export class World {
       }
     }
     for (const b of B) this.contain(b);
+    // dentro de la portería, el techo de la red
+    const bl = this.ball;
+    if (bl && Math.abs(bl.z) > this.f.L / 2 && bl.y + bl.r > CROSSBAR) { bl.y = CROSSBAR - bl.r; if (bl.vy > 0) bl.vy = -bl.vy * 0.3; }
     // ¿Gol? El garbanzo tiene que cruzar entero la línea
     const ball = this.ball;
     if (ball && !this.goal && Math.abs(ball.x) < this.f.goalW / 2) {
@@ -198,12 +232,12 @@ export class World {
   }
 
   stopAll() {
-    for (const b of this.bodies) { b.vx = 0; b.vz = 0; }
+    for (const b of this.bodies) { b.vx = 0; b.vz = 0; b.vy = 0; b.y = 0; }
   }
 }
 
 // Alineación inicial: 4 chapas + portero por equipo. kickoff = equipo que saca.
-export function setupMatch(world, kickoff = 0) {
+export function setupMatch(world, kickoff = 0, ballType = 'garbanzo') {
   world.bodies = [];
   world.ball = null;
   world.goal = null;
@@ -225,7 +259,10 @@ export function setupMatch(world, kickoff = 0) {
       last.x = 0.0; last.z = s * 0.035;
     }
   }
-  world.add(makeBody(KIND.BALL, 0, 0));
+  const ball = makeBody(KIND.BALL, 0, 0);
+  const bt = BALL_TYPES[ballType] || BALL_TYPES.garbanzo;
+  ball.r = bt.r; ball.m = bt.m; ball.mu = bt.mu; ball.type = ballType in BALL_TYPES ? ballType : 'garbanzo';
+  world.add(ball);
   return world;
 }
 

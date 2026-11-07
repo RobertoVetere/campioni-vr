@@ -22,9 +22,8 @@ function ledTexture() {
       if (x > c.width) break;
     }
   }
-  g.fillStyle = 'rgba(0,0,0,0.35)';
-  for (let i = 0; i < c.width; i += 4) g.fillRect(i, 0, 1, c.height);
   const t = new THREE.CanvasTexture(c);
+  t.anisotropy = 8; // sin rejilla de píxeles: con ella las vallas parpadeaban al moverse
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = THREE.RepeatWrapping;
   return t;
@@ -164,7 +163,7 @@ export function buildStadium() {
     bodies.instanceMatrix.needsUpdate = true;
     heads.instanceMatrix.needsUpdate = true;
     flags.forEach((f, i) => { f.rotation.y = Math.sin(t * 2.2 + i) * 0.4; });
-    led.offset.x = (t * 0.05) % 1;
+    led.offset.x = (t * 0.025) % 1;
   }
   update(0, 0);
   return { group: g, update, cheer: (team) => { cheer[team] = 3; }, count: people.length };
