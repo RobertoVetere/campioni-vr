@@ -171,6 +171,20 @@ function rebuildBodies() {
       reach.rotation.x = -Math.PI / 2; reach.position.y = 0.0007;
       m.add(reach);
       m.userData.reach = reach;
+      if (b.team === 0) {
+        // piloto: palito fino + bombilla que brilla
+        const pilot = new THREE.Group();
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.0007, 0.0007, 0.032, 6), new THREE.MeshBasicMaterial({ color: 0xcfd8e3, toneMapped: false }));
+        stem.position.y = 0.016 + (m.userData.h || 0.0065);
+        const bulb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.0065, 1), new THREE.MeshBasicMaterial({ color: 0x8fffb0, toneMapped: false }));
+        bulb.position.y = 0.045;
+        const halo = new THREE.Mesh(new THREE.IcosahedronGeometry(0.011, 1), new THREE.MeshBasicMaterial({ color: 0x8fffb0, transparent: true, opacity: 0.25, depthWrite: false, toneMapped: false }));
+        halo.position.y = 0.045;
+        pilot.add(stem, bulb, halo);
+        pilot.visible = false;
+        m.add(pilot);
+        m.userData.pilot = { group: pilot, bulb, halo };
+      }
     }
     bodyLayer.add(m);
     meshes.push(m);
@@ -420,6 +434,13 @@ let lastFlick = '';
 let selected = null; // chapa elegida por el jugador para el siguiente toque
 let lockedCap = null; // en tiro libre o penalti solo puede tirar esta
 
+function autoSelect() {
+  const ball = world.ball;
+  let best = null, bd = Infinity;
+  for (const b of world.bodies) if (b.team === 0 && b.kind === 'cap') { const d = Math.hypot(b.x - ball.x, b.z - ball.z); if (d < bd) { bd = d; best = b; } }
+  selected = best;
+}
+
 function select(b) {
   if (!b || selected === b) return;
   selected = b;
@@ -538,7 +559,8 @@ function nextTouch() {
   touchInfo = `${turn === 0 ? 'TÚ' : 'RIVAL'} · TOQUE ${n}/${TOUCHES}`;
   if (turn === 0) {
     state = 'aim';
-    say(touchesLeft > 1 ? 'Toca una chapa azul para elegirla y luego dale' : (lastFlick ? `¡Ahora tira! · ${lastFlick}` : '¡Ahora tira! (o pasa a otra chapa)'));
+    if (!selected || selected.team !== 0) autoSelect();
+    say(touchesLeft > 1 ? 'Dale con el dedo · toca un piloto para cambiar de chapa' : (lastFlick ? `¡Ahora tira! · ${lastFlick}` : '¡Ahora tira! (o cambia de chapa con su piloto)'));
   } else {
     state = 'cpu'; timer = 0.7; cpuGen = null; cpuShot = null;
     say(touchesLeft > 1 ? 'El rival prepara la jugada…' : 'El rival va a tirar…');
@@ -546,7 +568,14 @@ function nextTouch() {
   drawBoard();
 }
 
-function fire(b, vx, vz) {
+function fire(b, vx, vz, exact = false) {
+  for (const holder of [...hands, ...pads, mouse]) holder.sling = null;
+  if (!exact && b.team === 0) {
+    const sp = Math.hypot(vx, vz), k = Math.min(1, sp / MAX_SHOT);
+    const da = (Math.random() + Math.random() - 1) * 0.11 * k * k; // hasta ~6º a tope
+    const c = Math.cos(da), sn = Math.sin(da);
+    [vx, vz] = [vx * c - vz * sn, vx * sn + vz * c];
+  }
   shoot(b, vx, vz);
   flickSound();
   aim.visible = false;
@@ -747,19 +776,32 @@ function myCapNear(x, z, maxD) {
   return best;
 }
 
-function tryFlick(p, vel, capH = 0.04) {
-  if (!vel || p.y > capH || p.y < -0.025) return false;
+// Detección del toque. Mira el CAMINO del dedo entre dos lecturas (no solo dónde está),
+// para que un toque rápido no se "salte" la chapa, y acepta una franja de altura amplia
+// por si la mesa virtual no coincide al milímetro con la real.
+function segDist(ax, az, bx, bz, px, pz) {
+  const ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez;
+  let t = l2 > 0 ? ((px - ax) * ex + (pz - az) * ez) / l2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + ex * t), pz - (az + ez * t));
+}
+function tryFlick(p, vel, prev, capH = 0.06) {
+  if (!vel || p.y > capH || p.y < -0.05) return false;
   const s = Math.hypot(vel.vx, vel.vz);
-  const touching = myCapNear(p.x, p.z, 0.004);
-  if (touching && touching !== selected) { select(touching); return true; }
   if (s < FLICK_MIN) return false;
-  const b = myCapNear(p.x, p.z, 0.016);
+  const a = prev || p;
+  let b = null, bd = Infinity;
+  for (const c of world.bodies) {
+    if (c.team !== 0 || menuOpen || c.kind === 'ball') continue;
+    if (lockedCap && c !== lockedCap) continue;
+    const d = segDist(a.x, a.z, p.x, p.z, c.x, c.z) - c.r;
+    if (d < 0.016 && d < bd) { bd = d; b = c; }
+  }
   if (!b) return false;
-  // primero hay que elegir la chapa: tocarla la selecciona, sin disparar
-  if (b !== selected) { select(b); return true; }
-  // el dedo tiene que venir hacia la chapa, no alejarse
-  const dNow = Math.hypot(b.x - p.x, b.z - p.z), dOld = Math.hypot(b.x - vel.old.x, b.z - vel.old.z);
-  if (dOld <= dNow) return false;
+  // la elegida se mueve con cualquier toque; otra chapa solo con un toque claro (así no se mueven sin querer)
+  if (b !== selected) { if (s < FLICK_MIN * 1.8) return false; select(b); }
+  // el dedo tiene que ir hacia la chapa (no alejarse de ella)
+  if ((b.x - vel.old.x) * vel.vx + (b.z - vel.old.z) * vel.vz <= 0) return false;
   // dirección: mezcla de hacia dónde va el dedo y la línea dedo→centro de la chapa (por dónde golpea)
   let dx = vel.vx / s, dz = vel.vz / s;
   const cx = b.x - p.x, cz = b.z - p.z, cl = Math.hypot(cx, cz);
@@ -796,6 +838,16 @@ function slingUpdate(holder, pinchOn, p) {
   }
 }
 
+// Pilotos de luz encima de cada chapa disponible: se tocan con la punta del dedo para elegirla
+const PILOT_Y = 0.045;
+function pokePilots(p) {
+  for (const b of world.bodies) {
+    if (b.team !== 0 || b.kind === 'ball' || b === selected || menuOpen) continue;
+    if (lockedCap && b !== lockedCap) continue;
+    if (Math.hypot(p.x - b.x, p.y - PILOT_Y, p.z - b.z) < 0.02) select(b);
+  }
+}
+
 function pokeButtons(p, now) {
   // p en coordenadas de root
   for (const btn of buttons) {
@@ -827,15 +879,17 @@ function updateXRInput(now) {
     const pinchPt = thumb ? tip.clone().add(thumb).multiplyScalar(0.5) : tip.clone();
 
     pokeButtons(tip, now);
+    if (state === 'aim') pokePilots(tip);
     if (state === 'aim') slingUpdate(h, h.pinching, pinchPt);
 
     for (const name of ['index-finger-tip', 'middle-finger-tip']) {
       const p = name === 'index-finger-tip' ? tip.clone() : jointLocal(h.hand, name, new THREE.Vector3());
       if (!p) continue;
       pushHist(h.hist[name], now, p);
-      if (state === 'aim' && !h.pinching && !h.sling && now > h.cooldown) {
-        const vel = velOf(h.hist[name], now);
-        if (tryFlick(p, vel)) h.cooldown = now + 400;
+      if (state === 'aim' && !(h.sling && h.sling.pull > 0.012) && now > h.cooldown) {
+        const hh = h.hist[name];
+        const vel = velOf(hh, now);
+        if (tryFlick(p, vel, hh.length > 1 ? hh[hh.length - 2] : null)) h.cooldown = now + 400;
       }
     }
     // bolita en la punta del índice: se pone verde si vas lo bastante rápido
@@ -853,7 +907,7 @@ function updateXRInput(now) {
     pushHist(pd.hist, now, p);
     if (state === 'aim') {
       slingUpdate(pd, pd.pressing, p);
-      if (!pd.pressing && !pd.sling) tryFlick(p, velOf(pd.hist, now), 0.04);
+      if (!pd.pressing && !pd.sling) tryFlick(p, velOf(pd.hist, now), pd.hist.length > 1 ? pd.hist[pd.hist.length - 2] : null, 0.07);
     }
   }
 }
@@ -992,6 +1046,17 @@ renderer.setAnimationLoop((t) => {
       ud.glow.material.color.set(b === selected ? 0xffe066 : 0x8fffb0);
     }
     if (ud.reach) ud.reach.material.opacity = mine ? (b === selected ? 0.55 : 0.18) : (world.owner === b ? 0.35 : 0);
+    if (ud.pilot) {
+      ud.pilot.group.visible = mine && !b.flipped;
+      const sel = b === selected;
+      const col = sel ? 0xffd34d : 0x8fffb0;
+      ud.pilot.bulb.material.color.set(col); ud.pilot.halo.material.color.set(col);
+      const k = sel ? 1.25 : 0.85 + 0.15 * Math.sin(t / 200 + i);
+      ud.pilot.bulb.scale.setScalar(k); ud.pilot.halo.scale.setScalar(k * (sel ? 1.2 : 1));
+      ud.pilot.halo.material.opacity = sel ? 0.4 : 0.2;
+      // el piloto no gira ni se inclina con la chapa
+      ud.pilot.group.rotation.set(-meshes[i].rotation.x, b.angle, -meshes[i].rotation.z, 'YXZ');
+    }
   });
   renderer.render(scene, camera);
 });

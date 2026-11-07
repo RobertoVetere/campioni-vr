@@ -37,6 +37,7 @@ export const BALL_TYPES = {
 export const HEIGHT = { cap: 0.0065, keeper: 0.024 };
 export const CROSSBAR = 0.035;
 const LIFT = 0.55; // con la chapa volteada, parte del golpe se convierte en altura
+const HARD_HIT = 2.0; // m/s: por encima, un golpe normal también puede levantar el balón
 
 // Imán de posesión (como en el Subbuteo): un balón lento que entra en el radio de una chapa
 // se queda pegado a ella. Así los pases "llegan" y no todo es un rebote en disputa.
@@ -195,6 +196,11 @@ export class World {
         // chapa volteada contra el balón: lo levanta según la fuerza del golpe
         if (a.kind === KIND.BALL && b.flipped) a.vy = Math.max(a.vy, -rv * LIFT);
         if (b.kind === KIND.BALL && a.flipped) b.vy = Math.max(b.vy, -rv * LIFT);
+        // golpe muy fuerte con la chapa normal: a veces el balón se levanta (y puede irse por encima del larguero)
+        if (-rv > HARD_HIT && (a.kind === KIND.BALL || b.kind === KIND.BALL) && !a.flipped && !b.flipped) {
+          const ball = a.kind === KIND.BALL ? a : b;
+          if (ball.y < 0.001) ball.vy = Math.max(ball.vy, (-rv - HARD_HIT) * 1.2 * (0.3 + Math.random() * 1.2));
+        }
         // giro visual por la componente tangencial
         const tv = (b.vx - a.vx) * -nz + (b.vz - a.vz) * nx;
         a.spin += (tv * 0.3) / a.r; b.spin -= (tv * 0.3) / b.r;

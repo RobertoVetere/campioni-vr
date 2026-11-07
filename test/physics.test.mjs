@@ -180,7 +180,7 @@ test('sin voltear, la misma jugada no levanta el balón', () => {
   const w = new World();
   const ball = w.add(makeBody(KIND.BALL, 0, 0.05));
   const kicker = w.add(makeBody(KIND.CAP, 0, 0.08, 0));
-  kicker.vz = -2.2;
+  kicker.vz = -1.6;
   let maxY = 0;
   for (let t = 0; t < 2; t += 1 / 60) { w.step(1 / 60); maxY = Math.max(maxY, ball.y); }
   assert.equal(maxY, 0);
@@ -234,4 +234,20 @@ test('superficies: en arena la chapa recorre bastante menos que en tapete', () =
   };
   const tapete = dist(1), arena = dist(1.75);
   assert.ok(arena < tapete * 0.7, `tapete ${tapete.toFixed(3)} arena ${arena.toFixed(3)}`);
+});
+
+test('un golpe muy fuerte en juego a veces levanta el balón; uno suave nunca', () => {
+  const maxY = (speed) => {
+    let best = 0;
+    for (let k = 0; k < 12; k++) {
+      const w = new World();
+      const ball = w.add(makeBody(KIND.BALL, 0, 0.05));
+      const c = w.add(makeBody(KIND.CAP, 0, 0.08, 0));
+      c.vz = -speed;
+      for (let t = 0; t < 1; t += 1 / 60) { w.step(1 / 60); best = Math.max(best, ball.y); }
+    }
+    return best;
+  };
+  assert.equal(maxY(1.2), 0);
+  assert.ok(maxY(2.6) > 0.01, 'el tiro a tope debería levantarlo alguna vez');
 });
