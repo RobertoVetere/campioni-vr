@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.js';
 import { World, setupMatch, shoot, MAX_SHOT, FIELD, BALL_TYPES, MAGNET } from './physics.js';
 import { buildArena } from './arena.js';
+import { SURFACES, surfaceTexture } from './surfaces.js';
 import { think } from './ai.js';
 import { buildTable, buildCap, buildBall, buildShadow, textPanel, makeButton, TEAMS } from './visuals.js';
 import { buildStadium } from './stadium.js';
@@ -26,7 +27,7 @@ const SLING_GAIN = 11; // tirachinas: m/s por metro de estirón
 const PINCH_ON = 0.018, PINCH_OFF = 0.035;
 
 // ---------- Opciones (se recuerdan en este navegador) ----------
-const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal' };
+const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal', surface: 'tapete' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('campioni') || '{}')); } catch (e) { /* sin almacenamiento */ }
 function saveSettings() { try { localStorage.setItem('campioni', JSON.stringify(settings)); } catch (e) { /* nada */ } }
 
@@ -96,6 +97,21 @@ shadowsOn(stadium.group);
 stadium.group.visible = settings.stands;
 const effects = createEffects([TEAMS[0].shirt, TEAMS[1].shirt]);
 root.add(effects.group);
+
+// Cambia el campo: textura, colores de la mesa y física
+function setSurface(type) {
+  const S = SURFACES[type] || SURFACES.tapete;
+  settings.surface = SURFACES[type] ? type : 'tapete';
+  const felt = table.userData.felt;
+  felt.material.map = surfaceTexture(settings.surface);
+  felt.material.needsUpdate = true;
+  table.userData.rail.color.set(S.rail);
+  table.userData.wood.color.set(S.board);
+  for (const c of cushions) c.mesh.material.color.set(S.cushion);
+  world.surf = { mu: S.mu, jitter: S.jitter };
+  effects.setMarks(S.marks);
+  effects.clear();
+}
 function flashCushion(x, z, speed) {
   let best = null, bd = Infinity;
   for (const c of cushions) {
@@ -269,8 +285,8 @@ menu.rotation.x = -0.12;
 menu.visible = false;
 root.add(menu);
 {
-  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.39), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false }));
-  bg.position.y = -0.045;
+  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.435), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false }));
+  bg.position.y = -0.068;
   bg.position.z = -0.003;
   menu.add(bg);
 }
@@ -300,7 +316,9 @@ menuItem(3, () => `Gradas: ${settings.stands ? 'SÍ' : 'NO'}`, () => { settings.
 menuItem(4, () => `Balón: ${BALL_TYPES[settings.ball].name}`, () => setBall(ballKeys[(ballKeys.indexOf(settings.ball) + 1) % ballKeys.length]));
 menuItem(5, () => `Cielo (VR): ${settings.sky === 'night' ? 'NOCHE' : 'ATARDECER'}`, () => { settings.sky = settings.sky === 'night' ? 'sunset' : 'night'; applySky(); saveSettings(); });
 menuItem(6, () => `Fuerza del dedo: ${settings.finger.toUpperCase()}`, () => { const o = ['suave', 'normal', 'fuerte']; settings.finger = o[(o.indexOf(settings.finger) + 1) % 3]; saveSettings(); });
-menuItem(7, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
+const surfKeys = Object.keys(SURFACES);
+menuItem(7, () => `Campo: ${SURFACES[settings.surface].name}`, () => { setSurface(surfKeys[(surfKeys.indexOf(settings.surface) + 1) % surfKeys.length]); saveSettings(); });
+menuItem(8, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
 function openMenu() { menuOpen = true; menu.visible = true; aim.visible = false; for (const it of menuItems) it.userData.relabel(); }
 function closeMenu() { menuOpen = false; menu.visible = false; }
 function exitGame() {
@@ -986,6 +1004,7 @@ addEventListener('resize', () => {
 
 // Arranque: mesa preparada para el saque y botón JUGAR
 setupMatch(world, 0, settings.ball);
+setSurface(settings.surface);
 rebuildBodies();
 say('Pulsa JUGAR con el dedo');
 drawBoard();
@@ -995,4 +1014,4 @@ setupXRButtons();
 window.__campioni = { root, renderer, camera, applySky,
   tipWorld: (i) => { const j = hands[i].hand.joints?.['index-finger-tip']; if (!j || !j.visible) return null; const v = new THREE.Vector3(); j.getWorldPosition(v); return v.toArray(); },
   toWorld: (x, y, z) => root.localToWorld(new THREE.Vector3(x, y, z)).toArray(),
-  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, get selected() { return selected; }, select, startPenalty, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };
+  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, get selected() { return selected; }, setSurface, select, startPenalty, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };

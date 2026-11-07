@@ -98,6 +98,9 @@ export function buildTable() {
     addCushion(goalW / 2, s * L / 2, W / 2, s * L / 2);
   }
   g.userData.cushions = cushions;
+  g.userData.felt = felt;
+  g.userData.wood = wood;
+  g.userData.rail = rail;
   for (const s of [1, -1]) {
     addBox(sideW + rt, rt, -(goalW / 2 + sideW / 2) - rt / 2, s * (L / 2 + rt / 2));
     addBox(sideW + rt, rt, goalW / 2 + sideW / 2 + rt / 2, s * (L / 2 + rt / 2));

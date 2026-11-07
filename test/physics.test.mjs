@@ -222,3 +222,16 @@ test('imán: un balón rápido pasa de largo sin pegarse', () => {
   for (let t = 0; t < 0.15; t += 1 / 60) w.step(1 / 60);
   assert.ok(ball.z < 0.05, `debe seguir su camino: ${ball.z}`);
 });
+
+test('superficies: en arena la chapa recorre bastante menos que en tapete', () => {
+  const dist = (mu) => {
+    const w = new World();
+    w.surf = { mu: { cap: mu, keeper: 1, ball: 1 }, jitter: { cap: 0, keeper: 0, ball: 0 } };
+    const c = w.add(makeBody(KIND.CAP, 0, 0.3, 0));
+    c.vz = -1.5;
+    run(w);
+    return 0.3 - c.z;
+  };
+  const tapete = dist(1), arena = dist(1.75);
+  assert.ok(arena < tapete * 0.7, `tapete ${tapete.toFixed(3)} arena ${arena.toFixed(3)}`);
+});

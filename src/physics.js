@@ -77,6 +77,8 @@ export class World {
     this.foulAt = null; // dónde fue la falta {x, z}
     this.owner = null; // chapa que tiene el balón pegado
     this.magnet = true;
+    // superficie: multiplicadores de rozamiento y "desvío" aleatorio (arena, baches)
+    this.surf = { mu: { cap: 1, keeper: 1, ball: 1 }, jitter: { cap: 0, keeper: 0, ball: 0 } };
     this.events = [];
   }
 
@@ -88,6 +90,7 @@ export class World {
 
   clone() {
     const w = new World(this.f);
+    w.surf = this.surf;
     for (const b of this.bodies) w.add({ ...b });
     return w;
   }
@@ -147,7 +150,14 @@ export class World {
       const air = b.y > 0.0005;
       const s = Math.hypot(b.vx, b.vz);
       if (s === 0) { b.spin *= 0.9; continue; }
-      const dec = air ? s * 0.08 * h : b.mu * G * h + s * 0.15 * h;
+      const dec = air ? s * 0.08 * h : b.mu * this.surf.mu[b.kind] * G * h + s * 0.15 * h;
+      // desvío: la dirección hace un pequeño paseo aleatorio (surcos de arena, baches del cemento)
+      const jit = air ? 0 : this.surf.jitter[b.kind];
+      if (jit && s > 0.05) {
+        const da = (Math.random() - 0.5) * jit * Math.sqrt(h) * 2;
+        const c = Math.cos(da), sn = Math.sin(da);
+        const vx = b.vx * c - b.vz * sn; b.vz = b.vx * sn + b.vz * c; b.vx = vx;
+      }
       if (!air && (s <= dec || s < STOP_SPEED)) { b.vx = 0; b.vz = 0; }
       else { const k = (s - dec) / s; b.vx *= k; b.vz *= k; }
       b.x += b.vx * h;

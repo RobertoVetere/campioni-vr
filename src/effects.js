@@ -67,12 +67,13 @@ function blobLayer(max, blending, y) {
 
 export function createEffects(teamColors) {
   const group = new THREE.Group();
-  const marks = blobLayer(400, THREE.NormalBlending, 0.0003);
+  const marks = blobLayer(900, THREE.NormalBlending, 0.0003);
   const trails = blobLayer(500, THREE.AdditiveBlending, 0.0035);
   group.add(marks.mesh, trails.mesh);
   const cols = teamColors.map((c) => new THREE.Color(c).lerp(new THREE.Color(0xffffff), 0.35));
   const ballCol = new THREE.Color(0xffd27a);
-  const scorch = new THREE.Color(0x16210f);
+  let scorch = new THREE.Color(0x16210f);
+  let markSpeed = MARK_SPEED, markLife = MARK_LIFE, markAlpha = 0.45;
   const lastMark = new Map();
 
   function update(dt, bodies) {
@@ -88,10 +89,10 @@ export function createEffects(teamColors) {
           trails.add(b.x - b.vx * t, b.z - b.vz * t, b.r * (b.kind === 'ball' ? 1.6 : 0.9), c, TRAIL_LIFE, 0.25 + 0.45 * k);
         }
       }
-      if (s > MARK_SPEED) {
+      if (s > markSpeed && !(b.y > 0.001)) {
         const lm = lastMark.get(b) || { x: 1e9, z: 1e9 };
         if (Math.hypot(b.x - lm.x, b.z - lm.z) > b.r * 0.5) {
-          marks.add(b.x, b.z, b.r * (b.kind === 'ball' ? 0.9 : 0.75), scorch, MARK_LIFE, 0.45 * Math.min(1, (s - MARK_SPEED) / 0.8 + 0.4));
+          marks.add(b.x, b.z, b.r * (b.kind === 'ball' ? 0.9 : 0.75), scorch, markLife, markAlpha * Math.min(1, (s - markSpeed) / 0.8 + 0.4));
           lastMark.set(b, { x: b.x, z: b.z });
         }
       }
@@ -99,5 +100,10 @@ export function createEffects(teamColors) {
     trails.update(dt);
     marks.update(dt);
   }
-  return { group, update, clear() { trails.clear(); marks.clear(); } };
+  return {
+    group, update,
+    clear() { trails.clear(); marks.clear(); },
+    // la huella depende del suelo: en arena queda casi siempre y dura mucho
+    setMarks({ speed, life, color, alpha }) { markSpeed = speed; markLife = life; scorch = new THREE.Color(color); markAlpha = alpha; },
+  };
 }
