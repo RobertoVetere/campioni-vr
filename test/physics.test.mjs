@@ -339,3 +339,23 @@ test('palma: empujar otra chapa al arrastrar no la hace salir disparada', () => 
   // la empujada solo se aparta lo justo (sin arreglo salía a ~1 m/s y acababa en z≈-0.07)
   assert.ok(o.z > -0.03, `la otra ha salido despedida hasta z=${o.z.toFixed(3)}`);
 });
+
+test('penalti con puntería asistida: al centro para el portero, a la esquina es gol', () => {
+  const shot = (deg) => {
+    const w = setupMatch(new World(), 0);
+    const kicker = w.bodies.find((b) => b.team === 0 && b.kind === 'cap');
+    w.bodies = w.bodies.filter((b) => b.kin || b === kicker || b === w.ball);
+    const spotZ = -(FIELD.L / 2 - 0.15);
+    w.ball.x = 0; w.ball.z = spotZ;
+    kicker.x = 0; kicker.z = spotZ + (kicker.r + w.ball.r + 0.02);
+    const k = w.bodies.find((b) => b.kin && b.team === 1);
+    k.x = 0; k.tx = 0; k.z = -(FIELD.L / 2 - k.r - 0.002); k.homeZ = k.z;
+    const a = (deg * Math.PI) / 180;
+    kicker.vx = Math.sin(a) * 2.2; kicker.vz = -Math.cos(a) * 2.2; kicker.aimAssist = true;
+    run(w);
+    return !!w.goal;
+  };
+  assert.equal(shot(0), false, 'al centro lo para');
+  assert.equal(shot(24), true, 'a la esquina entra');
+  assert.equal(shot(-24), true, 'a la otra esquina entra');
+});

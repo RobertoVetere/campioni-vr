@@ -34,7 +34,7 @@ const MOVE_LIMIT = 0.06; // con la palma, cada arrastre llega como mucho a esto 
 const PALM_HEIGHT = 0.07; // la palma tiene que ir a ras de mesa (como mucho a esta altura)
 
 // ---------- Opciones (se recuerdan en este navegador) ----------
-const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal', surface: 'tapete', keeper: 'manual', shootHand: 'right', difficulty: 'normal', log: false };
+const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal', surface: 'tapete', keeper: 'manual', shootHand: 'right', difficulty: 'normal', log: false, zoom: true };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('campioni') || '{}')); } catch (e) { /* sin almacenamiento */ }
 function saveSettings() { try { localStorage.setItem('campioni', JSON.stringify(settings)); } catch (e) { /* nada */ } }
 if (new URLSearchParams(location.search).get('log') === '1') settings.log = true;
@@ -85,6 +85,31 @@ function applySky() {
 // Todo lo de la mesa cuelga de "root": se puede recolocar y subir/bajar
 const root = new THREE.Group();
 root.position.set(0, 0.8, 0);
+// Dónde está la mesa "de verdad" (colocada/calibrada). Sobre esto se aplica el acercamiento
+// (zoom) en las jugadas a balón parado: la mesa se agranda y trae la jugada hacia ti, sin girar
+// nada y despacio, para que no maree. Toda la entrada de manos va en coordenadas de la mesa.
+const tableBase = { pos: new THREE.Vector3(0, 0.8, 0), rotY: 0 };
+const zoom = { s: 1, target: 1, focus: new THREE.Vector3(), anchor: new THREE.Vector3(0, 0, 0.12), cur: new THREE.Vector3(0, 0, 0.12) };
+function zoomScale() { return root.scale.x; }
+function zoomTo(scale, focusX = 0, focusZ = 0, anchorZ = 0.12) {
+  if (!settings.zoom) scale = 1;
+  zoom.target = scale;
+  zoom.focus.set(focusX, 0, focusZ);
+  zoom.anchor.set(0, 0, anchorZ);
+  if (scale !== 1) log.ev('zoom', { scale, fx: focusX, fz: focusZ });
+}
+function applyTable(dt) {
+  const k = 1 - Math.exp(-dt * 3.2); // ~0,8 s para llegar
+  zoom.s += (zoom.target - zoom.s) * k;
+  zoom.cur.lerp(zoom.target === 1 ? zoom.anchor : zoom.focus, k);
+  const S = zoom.s;
+  // el punto enfocado (cur) queda donde está el ancla: con S=1 y cur=ancla no hay desplazamiento
+  const off = new THREE.Vector3().copy(zoom.anchor).sub(zoom.cur.clone().multiplyScalar(S));
+  off.applyAxisAngle(new THREE.Vector3(0, 1, 0), tableBase.rotY);
+  root.position.copy(tableBase.pos).add(off);
+  root.rotation.y = tableBase.rotY;
+  root.scale.setScalar(S);
+}
 scene.add(root);
 // Luz principal tipo foco de estadio, con sombras reales. Cuelga de la mesa para seguirla.
 const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
@@ -321,8 +346,8 @@ function addButton(label, x, y, z, onPress, opts = {}) {
   return b;
 }
 const nearZ = FIELD.L / 2 + 0.07;
-addButton('▲', FIELD.W / 2 - 0.02, 0.03, nearZ, () => (root.position.y += 0.02), { w: 0.04, color: '#444c58' });
-addButton('▼', FIELD.W / 2 - 0.07, 0.03, nearZ, () => (root.position.y -= 0.02), { w: 0.04, color: '#444c58' });
+addButton('▲', FIELD.W / 2 - 0.02, 0.03, nearZ, () => (tableBase.pos.y += 0.02), { w: 0.04, color: '#444c58' });
+addButton('▼', FIELD.W / 2 - 0.07, 0.03, nearZ, () => (tableBase.pos.y -= 0.02), { w: 0.04, color: '#444c58' });
 const tableLabels = [];
 function labeled(key, btn, w, h, color) { tableLabels.push({ key, btn, w, h, color }); return btn; }
 labeled('btn.here', addButton(t('btn.here'), FIELD.W / 2 - 0.13, 0.03, nearZ, () => (placeRequested = true), { w: 0.06, color: '#444c58' }), 0.06, undefined, '#444c58');
@@ -431,6 +456,7 @@ const PAGES = {
       [t('menu.finger', { v: t(`finger.${settings.finger}`) }), () => { settings.finger = cycle(['suave', 'normal', 'fuerte'], settings.finger); saveSettings(); }],
       [t('menu.keeper', { v: t(settings.keeper === 'auto' ? 'keeper.auto' : 'keeper.manual') }), () => { settings.keeper = settings.keeper === 'auto' ? 'manual' : 'auto'; applyKeeperMode(); saveSettings(); }],
       [t('menu.calib'), () => startCalib(), '#2f6f8f'],
+      [t('menu.zoom', { v: yes(settings.zoom) }), () => { settings.zoom = !settings.zoom; if (!settings.zoom) zoomTo(1); saveSettings(); }],
       [`${t('menu.log')}: ${yes(settings.log)}`, () => { settings.log = !settings.log; log.enable(settings.log); log.setMeta({ settings }); saveSettings(); }, '#5a2f2f'],
       [t('menu.back'), () => showPage('main'), '#444c58'],
     ],
@@ -554,6 +580,38 @@ function showAim(b, vx, vz, loft = 0) {
   aim.userData.shaft.material.color.setHSL(0.15 - hot * 0.15, 1, 0.6);
 }
 
+// ---------- Guía de puntería (penaltis): adónde irá el balón según dónde pongas el dedo ----------
+const guide = (() => {
+  const n = 14, pts = new Float32Array(n * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+  const m = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffe066, size: 0.006, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false }));
+  m.visible = false; m.frustumCulled = false;
+  root.add(m);
+  return {
+    show(x, z, dx, dz) {
+      for (let i = 0; i < n; i++) { const d = 0.012 + i * 0.012; pts.set([x + dx * d, 0.004, z + dz * d], i * 3); }
+      geo.attributes.position.needsUpdate = true; m.visible = true;
+    },
+    hide() { m.visible = false; },
+  };
+})();
+function updateGuide(tips) {
+  const k = lockedCap;
+  if (state !== 'aim' || !k || !k.aimAssist || !world.ball) { guide.hide(); return; }
+  // con el tirachinas: la dirección del estirón; con el dedo: del dedo al centro de la chapa
+  const sl = [...hands, mouse].find((h) => h.sling);
+  let dx, dz;
+  if (sl && Math.hypot(sl.sling.vx || 0, sl.sling.vz || 0) > 0.05) { dx = sl.sling.vx; dz = sl.sling.vz; }
+  else {
+    const tip = tips.find((p) => p && p.y < 0.07 && Math.hypot(p.x - k.x, p.z - k.z) < 0.12 && Math.hypot(p.x - k.x, p.z - k.z) > k.r * 0.6);
+    if (!tip) { guide.hide(); return; }
+    dx = k.x - tip.x; dz = k.z - tip.z;
+  }
+  const l = Math.hypot(dx, dz) || 1;
+  guide.show(world.ball.x, world.ball.z, dx / l, dz / l);
+}
+
 // ---------- Confeti ----------
 const confetti = (() => {
   const N = 160;
@@ -655,8 +713,10 @@ function clearSpot(x, z, rad, keep) {
 }
 
 function applyDifficulty() { KEEPER.autoSpeed = DIFFICULTY[settings.difficulty].keeper; }
+function startMatchZoomReset() { zoomTo(1); }
 function startMatch() {
-  log.setMeta({ settings, tableY: root.position.y });
+  startMatchZoomReset();
+  log.setMeta({ settings, tableY: tableBase.pos.y });
   log.ev('start', { mode: 'match', diff: settings.difficulty });
   mode = 'match';
   hideStartButtons();
@@ -694,6 +754,7 @@ function startFreeKick(team) {
   clearSpot(ball.x, ball.z, 0.035, [best, ball]);
   best.flipped = true;
   best.locked = true;
+  zoomTo(1.6, ball.x * 0.6, ball.z, 0.05);
   lockedCap = best;
   selected = team === 0 ? best : null;
   freeKick = true;
@@ -720,7 +781,9 @@ function startPenalty(team) {
   ball.x = 0; ball.z = spotZ; ball.y = 0; ball.vy = 0;
   let kicker = null, bd = Infinity;
   for (const b of world.bodies) if (b.team === team && b.kind === 'cap') { const d = Math.hypot(b.x, b.z - spotZ); if (d < bd) { bd = d; kicker = b; } }
-  kicker.x = 0; kicker.z = spotZ - dir * (kicker.r + ball.r + 0.025);
+  // puntería asistida: el balón sale en la dirección en la que mueves la chapa
+  kicker.x = 0; kicker.z = spotZ - dir * (kicker.r + ball.r + 0.02);
+  kicker.aimAssist = true;
   const keeper = world.bodies.find((b) => b.team !== team && b.kind === 'keeper');
   keeper.x = 0; keeper.tx = 0; keeper.z = dir * (FIELD.L / 2 - keeper.r - 0.002);
   keeper.homeZ = keeper.z; // en el penalti, el portero sobre la línea (si no, la física lo devuelve a su sitio)
@@ -736,6 +799,9 @@ function startPenalty(team) {
   freeKick = true; // un único toque especial
   turn = team; touchesLeft = 1;
   whistle('goal');
+  // acercar la jugada: tu tiro -> el área rival viene hacia ti; su tiro -> tu portería y la palanca
+  if (team === 0) zoomTo(2.0, 0, spotZ + 0.03, 0.02);
+  else zoomTo(1.6, 0, FIELD.L / 2 - 0.08, 0.02);
   touchInfo = t('pk', { t: TEAMS[team].name });
   if (team === 0) { state = 'aim'; say(t('pk.you')); }
   else { state = 'cpu'; timer = 1.0; cpuPrep = false; cpuGen = null; cpuShot = null; say(t('pk.cpu')); }
@@ -777,6 +843,8 @@ function penDots(team) {
 }
 function penaltyResult(scored) {
   const team = lastShooter;
+  { const bl = world.ball, k = world.bodies.find((b) => b.kin && b.team !== team);
+    log.ev('pen_result', { team, scored, bx: bl.x, bz: bl.z, by: bl.y, kx: k?.x, why: scored ? 'gol' : Math.abs(bl.x) > FIELD.goalW / 2 ? 'fuera' : 'parada_o_corto' }); }
   pen.kicks[team].push(scored);
   if (!scored) { say(t(team === 0 ? 'pens.miss' : 'pens.save')); if (team === 1) { crowdSwell(0.8); celebrate(0); } }
   const [a, b] = pen.kicks;
@@ -832,7 +900,7 @@ function nextTouch() {
 function fire(b, vx, vz, exact = false) {
   log.ev('fire', { team: b.team, cap: b.num, v: Math.hypot(vx, vz), vx, vz, loft: b.loft || 0, state });
   for (const holder of [...hands, ...pads, mouse]) holder.sling = null;
-  if (!exact && b.team === 0) {
+  if (!exact && b.team === 0 && !b.aimAssist) {
     const sp = Math.hypot(vx, vz), k = Math.min(1, sp / MAX_SHOT);
     const da = (Math.random() + Math.random() - 1) * 0.11 * k * k; // hasta ~6º a tope
     const c = Math.cos(da), sn = Math.sin(da);
@@ -854,6 +922,7 @@ function fire(b, vx, vz, exact = false) {
 
 function finishGame(won) {
   state = 'end';
+  zoomTo(1);
   const news = recordResult(progress, { mode, won, diff: settings.difficulty, goalsFor: score[0], goalsAgainst: score[1] });
   touchInfo = t(mode === 'penalties' ? 'end.pens' : 'end.match');
   const names = news.map((u) => (u.kind === 'ball' ? ballName(u.key) : surfName(u.key)));
@@ -929,7 +998,7 @@ function updateGame(dt) {
       world.stopAll();
       for (const b of world.bodies) b.loft = 0;
       slowFired = false;
-      if (freeKick) { freeKick = false; lockedCap = null; for (const b of world.bodies) { b.flipped = false; b.locked = false; } }
+      if (freeKick) { freeKick = false; lockedCap = null; for (const b of world.bodies) { b.flipped = false; b.locked = false; } if (mode !== 'penalties') zoomTo(1); }
       if (mode === 'penalties') { penaltyResult(false); return; }
       if (mode === 'tutorial') { touchesLeft = TOUCHES; nextTouch(); return; }
       if (world.foul !== null) {
@@ -1064,6 +1133,12 @@ function pushHist(hist, now, p) {
   hist.push({ t: now, x: p.x, y: p.y, z: p.z });
   while (hist.length && now - hist[0].t > 120) hist.shift();
 }
+function vyOf(hist) {
+  if (hist.length < 3) return 0;
+  const a = hist[hist.length - 3], b = hist[hist.length - 1];
+  const dt = (b.t - a.t) / 1000;
+  return dt > 0.005 ? (b.y - a.y) / dt : 0;
+}
 function velOf(hist, now) {
   // velocidad PUNTA de los últimos ~90 ms (entre muestras de 2 en 2 para quitar temblor)
   if (hist.length < 3) return null;
@@ -1110,9 +1185,10 @@ function flickReject(why, data) {
   log.ev('flick_no', { why, ...data });
   return false;
 }
-function tryFlick(p, vel, prev, capH = 0.06) {
+function tryFlick(p, vel, prev, capH = 0.06, vy = 0) {
   if (!vel) return false;
-  const s = Math.hypot(vel.vx, vel.vz);
+  const k = zoomScale();
+  const s = Math.hypot(vel.vx, vel.vz) * k; // velocidad real del dedo (aunque la mesa esté acercada)
   const a = prev || p;
   let b = null, bd = Infinity;
   for (const c of world.bodies) {
@@ -1125,6 +1201,9 @@ function tryFlick(p, vel, prev, capH = 0.06) {
   const info = { cap: b.num, sel: selected?.num, sp: s, y: p.y, d: bd };
   if (p.y > capH || p.y < -0.05) return flickReject('altura', info);
   if (s < FLICK_MIN) return flickReject('lento', info);
+  info.vy = vy * k;
+  if (Math.abs(vy * k) > s * 0.8) return flickReject('vertical', info); // el dedo baja/sube: no es un toque
+  if (freeKick && ((turn === 0 && vel.vz > 0) || (turn === 1 && vel.vz < 0))) return flickReject('hacia_atras', info);
   // la elegida sale con cualquier toque; otra chapa tuya, con un toque claro (y pasa a ser la elegida)
   if (b !== selected) {
     if (s < FLICK_MIN * 1.6) return flickReject('no_elegida_y_flojo', info);
@@ -1133,9 +1212,11 @@ function tryFlick(p, vel, prev, capH = 0.06) {
   // el dedo tiene que ir hacia la chapa (no alejarse de ella)
   if ((b.x - vel.old.x) * vel.vx + (b.z - vel.old.z) * vel.vz <= 0) return flickReject('se_aleja', info);
   // dirección: mezcla de hacia dónde va el dedo y la línea dedo→centro de la chapa (por dónde golpea)
-  let dx = vel.vx / s, dz = vel.vz / s;
+  const sl = Math.hypot(vel.vx, vel.vz) || 1;
+  let dx = vel.vx / sl, dz = vel.vz / sl;
   const cx = b.x - p.x, cz = b.z - p.z, cl = Math.hypot(cx, cz);
-  if (cl > 1e-4) { dx = dx * 0.6 + (cx / cl) * 0.4; dz = dz * 0.6 + (cz / cl) * 0.4; }
+  // en el penalti manda la dirección del dedo (con la guía de puntería); en juego se mezcla con el punto de golpeo
+  if (cl > 1e-4 && !b.aimAssist) { dx = dx * 0.6 + (cx / cl) * 0.4; dz = dz * 0.6 + (cz / cl) * 0.4; }
   const dl = Math.hypot(dx, dz) || 1;
   const power = flickPower(s);
   log.ev('flick', { cap: b.num, sp: s, power, y: p.y, d: bd });
@@ -1148,17 +1229,26 @@ function tryFlick(p, vel, prev, capH = 0.06) {
 }
 
 function slingUpdate(holder, pinchOn, p) {
-  // pellizcar cerca de una chapa, estirar hacia atrás y soltar
-  if (!holder.sling && pinchOn && p && p.y < 0.07) {
-    const b = myCapNear(p.x, p.z, 0.025);
-    if (b && (b === selected || holder === mouse)) { select(b, 'sling'); holder.sling = { b, y0: p.y }; log.ev('sling_start', { cap: b.num }); }
+  // pellizcar SOBRE una chapa (al empezar el pellizco, no con la mano ya pellizcando por el camino),
+  // estirar hacia atrás y soltar. El estirón es cuánto ha retrocedido la mano desde que pellizcaste.
+  const pinchStarted = pinchOn && !holder.wasPinch;
+  holder.wasPinch = pinchOn;
+  if (!holder.sling && pinchStarted && p && p.y < 0.07) {
+    const b = myCapNear(p.x, p.z, 0.022);
+    if (b && (b === selected || holder === mouse || !selected)) {
+      select(b, 'sling');
+      holder.sling = { b, y0: p.y, x0: p.x, z0: p.z };
+      log.ev('sling_start', { cap: b.num, d: Math.hypot(p.x - b.x, p.z - b.z) - b.r });
+    }
   }
   if (holder.sling) {
     const b = holder.sling.b;
     if (p) {
-      holder.sling.vx = (b.x - p.x) * SLING_GAIN;
-      holder.sling.vz = (b.z - p.z) * SLING_GAIN;
-      holder.sling.pull = Math.hypot(b.x - p.x, b.z - p.z);
+      const k = zoomScale(); // con la mesa acercada, el mismo gesto real vale lo mismo
+      const dx = holder.sling.x0 - p.x, dz = holder.sling.z0 - p.z;
+      holder.sling.vx = dx * SLING_GAIN * k;
+      holder.sling.vz = dz * SLING_GAIN * k;
+      holder.sling.pull = Math.hypot(dx, dz) * k;
       // subir la mano mientras estiras = tiro por arriba (0 raso, 1 muy elevado)
       holder.sling.loft = Math.max(0, Math.min(1, (p.y - holder.sling.y0) / 0.07));
       showAim(b, holder.sling.vx, holder.sling.vz, holder.sling.loft);
@@ -1183,24 +1273,29 @@ function pokePilots(p) {
   }
 }
 
-function pokeButtons(p, now) {
-  // p en coordenadas de root
+// Un toque = una pulsación: tras pulsar, ese dedo tiene que salir de todos los botones antes de
+// volver a pulsar (antes, al redibujarse el menú, el dedo que seguía dentro pulsaba el botón nuevo
+// una y otra vez: 'Mano de tiro' cambió 23 veces en 4 s). Además, 350 ms mínimo entre pulsaciones.
+const btnLatch = new Map();
+let lastBtnPress = 0;
+function pokeButtons(p, now, who = 'x') {
+  let inside = null;
   for (const btn of buttons) {
     if (!shown(btn)) continue;
     v3.copy(p);
     root.localToWorld(v3);
     btn.worldToLocal(v3);
     const { w, h } = btn.userData;
-    if (Math.abs(v3.x) < w / 2 && Math.abs(v3.y) < h / 2 && v3.z < 0.012 && v3.z > -0.02) {
-      if (now - btn.userData.pressed > 600) {
-        btn.userData.pressed = now;
-        initAudio();
-        buttonSound();
-        log.ev('button', { label: btn.userData.label });
-        btn.userData.onPress();
-      }
-    }
+    if (Math.abs(v3.x) < w / 2 && Math.abs(v3.y) < h / 2 && v3.z < 0.012 && v3.z > -0.02) { inside = btn; break; }
   }
+  if (!inside) { btnLatch.delete(who); return; }
+  if (btnLatch.get(who) || now - lastBtnPress < 350) return;
+  btnLatch.set(who, true);
+  lastBtnPress = now;
+  initAudio();
+  buttonSound();
+  log.ev('button', { label: inside.userData.label });
+  inside.userData.onPress();
 }
 
 // ---------- Panel flotante de instrucciones (calibración y tutorial), a la altura de los ojos ----------
@@ -1254,6 +1349,7 @@ calibRing.rotation.x = -Math.PI / 2; calibRing.visible = false; calibRing.render
 scene.add(calibRing);
 let calibK = 0;
 function startCalib() {
+  zoomTo(1); zoom.s = 1; zoom.cur.copy(zoom.anchor); applyTable(1);
   closeMenu();
   hideStartButtons();
   state = 'calib';
@@ -1287,7 +1383,7 @@ function calibUpdate(dt) {
 }
 function finishCalib(tableY) {
   log.ev('calib', { tableY: tableY ?? -1, skipped: tableY === null });
-  if (tableY !== null) { root.position.y = tableY; buttonSound(); celebrate(0); }
+  if (tableY !== null) { tableBase.pos.y = tableY; buttonSound(); celebrate(0); }
   calibRing.visible = false;
   info.visible = false;
   if (!progress.tutorialDone && renderer.xr.isPresenting) startTutorial();
@@ -1496,14 +1592,16 @@ function palmUpdate(h, i, open, closing, palm, dt) {
   return true;
 }
 
+const shooterTips = [];
 function updateXRInput(now, dt) {
+  shooterTips.length = 0;
   for (const h of hands) h.dbg = null;
   if (log.enabled) queueMicrotask(() => log.sample(() => ({
-    st: state, sel: selected?.num, ball: world.ball ? [world.ball.x, world.ball.z] : null, tableY: root.position.y,
+    st: state, sel: selected?.num, ball: world.ball ? [world.ball.x, world.ball.z] : null, tableY: tableBase.pos.y, zoom: root.scale.x, kx: myKeeper()?.x,
     L: hands.find((h) => h.side === 'left')?.dbg || hands[0].dbg, R: hands.find((h) => h.side === 'right')?.dbg || hands[1].dbg,
   })));
   if (state === 'calib') {
-    for (const h of hands) { const tip = jointLocal(h.hand, 'index-finger-tip', v1); if (tip) pokeButtons(tip.clone(), now); }
+    hands.forEach((h, hi) => { const tip = jointLocal(h.hand, 'index-finger-tip', v1); if (tip) pokeButtons(tip.clone(), now, 'h' + hi); });
     calibUpdate(dt);
     return;
   }
@@ -1525,7 +1623,7 @@ function updateXRInput(now, dt) {
     const open = !h.pinching && reach > 0.12 && pd > 0.045;
     const wideOpen = !h.pinching && reach > 0.14 && pd > 0.06;
 
-    pokeButtons(tip, now);
+    pokeButtons(tip, now, 'h' + hi);
     // la palanca tiene prioridad: si la tienes agarrada, esa mano no hace otra cosa
     const curl = fingerCurl(h.hand);
     {
@@ -1546,6 +1644,7 @@ function updateXRInput(now, dt) {
       if (state === 'aim') { pokePilots(tip); selectByTouch(tip); }
     }
     if (!isShooter(h)) { pushHist(h.hist['index-finger-tip'], now, tip); return; }
+    shooterTips.push(tip.clone());
     if (state === 'aim') slingUpdate(h, h.pinching, pinchPt);
 
     for (const name of ['index-finger-tip', 'middle-finger-tip']) {
@@ -1555,7 +1654,7 @@ function updateXRInput(now, dt) {
       if (state === 'aim' && !(h.sling && h.sling.pull > 0.012) && now > h.cooldown) {
         const hh = h.hist[name];
         const vel = velOf(hh, now);
-        if (tryFlick(p, vel, hh.length > 1 ? hh[hh.length - 2] : null)) h.cooldown = now + 400;
+        if (tryFlick(p, vel, hh.length > 1 ? hh[hh.length - 2] : null, 0.06, vyOf(hh))) h.cooldown = now + 400;
       }
     }
     // bolita en la punta del índice: se pone verde si vas lo bastante rápido
@@ -1569,7 +1668,7 @@ function updateXRInput(now, dt) {
     if (!pd.connected || pd.isHand) continue;
     pd.grip.getWorldPosition(v1);
     const p = root.worldToLocal(v1).clone();
-    pokeButtons(p, now);
+    pokeButtons(p, now, 'pad' + pads.indexOf(pd));
     pushHist(pd.hist, now, p);
     if (state === 'aim') {
       slingUpdate(pd, pd.pressing, p);
@@ -1610,10 +1709,11 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     const b = pt && myCapNear(pt.x, pt.z, 0.006);
     // con el ratón: primer clic elige la chapa, el siguiente arrastra para tirar
     if (b && b !== selected) { select(b); mouse.down = false; return; }
-    if (b === selected) slingUpdate(mouse, true, pt);
+    if (b === selected) { mouse.wasPinch = false; slingUpdate(mouse, true, pt); }
   }
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
+  mouse.tip = pointerTable(e);
   if (mouse.lever) { const pt = pointerTable(e), k = myKeeper(); if (pt && k) { k.tx = Math.max(-KEEPER.range, Math.min(KEEPER.range, pt.x)); if (Math.abs(k.tx) > 0.03) tutEvent('lever'); } return; }
   if (mouse.down && state === 'aim') slingUpdate(mouse, true, pointerTable(e));
 });
@@ -1638,9 +1738,9 @@ function placeInFront() {
   v2.y = 0;
   if (v2.lengthSq() < 1e-6) v2.set(0, 0, -1);
   v2.normalize();
-  root.position.copy(v1).addScaledVector(v2, 0.75);
-  root.position.y = Math.max(0.45, v1.y - 0.5);
-  root.rotation.y = Math.atan2(-v2.x, -v2.z);
+  tableBase.pos.copy(v1).addScaledVector(v2, 0.75);
+  tableBase.pos.y = Math.max(0.45, v1.y - 0.5);
+  tableBase.rotY = Math.atan2(-v2.x, -v2.z);
 }
 
 // ---------- Botones de entrada al visor ----------
@@ -1718,8 +1818,9 @@ function onXREnd() {
   room.visible = true;
   tableLegs.visible = true;
   applySky();
-  root.position.set(0, 0.8, 0);
-  root.rotation.set(0, 0, 0);
+  tableBase.pos.set(0, 0.8, 0);
+  tableBase.rotY = 0;
+  zoomTo(1);
 }
 
 // ---------- Bucle ----------
@@ -1730,10 +1831,13 @@ renderer.setAnimationLoop((t) => {
   const now = performance.now();
   if (renderer.xr.isPresenting) {
     if (placeRequested) { placeInFront(); placeRequested = false; }
+    applyTable(dt);
     if (calibPending) { calibPending = false; startCalib(); }
     leverHover = false;
     updateXRInput(now, dt);
+    updateGuide(shooterTips);
   }
+  if (!renderer.xr.isPresenting) { applyTable(dt); updateGuide(mouse.tip ? [mouse.tip] : []); }
   updateGame(dt);
   tutorialUpdate(dt);
   if (state !== loggedState) { log.ev('state', { from: loggedState, to: state, mode, turn, touches: touchesLeft }); loggedState = state; }

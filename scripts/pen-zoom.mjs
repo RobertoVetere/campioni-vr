@@ -1,0 +1,30 @@
+// Penalti en escritorio: zoom, guía de puntería y un tiro a la esquina con el ratón (tirachinas)
+import puppeteer from 'puppeteer-core';
+import { spawn } from 'child_process';
+const srv = spawn('npx', ['vite', 'preview', '--port', '4190', '--strictPort'], { cwd: new URL('..', import.meta.url).pathname });
+await new Promise((r) => setTimeout(r, 2500));
+const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', protocolTimeout: 300000, args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-proxy-server'] });
+const p = await b.newPage();
+await p.setViewport({ width: 900, height: 650 });
+const errs = [];
+p.on('pageerror', (e) => errs.push(e.message));
+await p.goto('http://localhost:4190/', { waitUntil: 'load', timeout: 60000 });
+await new Promise((r) => setTimeout(r, 1500));
+await p.evaluate(() => { document.getElementById('ui').style.display = 'none'; window.__campioni.startPenalties(); });
+await new Promise((r) => setTimeout(r, 2500));
+await p.screenshot({ path: '/tmp/claude-0/sp/pen-zoom.png' });
+const res = await p.evaluate(async () => {
+  const g = window.__campioni, w = g.world;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const out = { zoom: +g.root.scale.x.toFixed(2) };
+  const k = w.bodies.find((x) => x.team === 0 && x.kind === 'cap');
+  const a = 23 * Math.PI / 180;
+  g.fire(w.bodies.indexOf(k), Math.sin(a) * 2.2, -Math.cos(a) * 2.2);
+  const t0 = performance.now();
+  while (performance.now() - t0 < 20000 && g.pen.kicks[0].length === 0) await wait(50);
+  out.primerTiro = g.pen.kicks[0];
+  return out;
+});
+console.log(JSON.stringify(res));
+console.log('ERRORES:', errs.length ? errs.join('\n') : 'ninguno');
+await b.close(); srv.kill(); process.exit(0);

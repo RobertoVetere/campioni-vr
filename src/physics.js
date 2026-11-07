@@ -216,6 +216,9 @@ export class World {
         b.x += nx * cb; b.z += nz * cb;
         const rv = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
         if (rv >= 0) continue;
+        // velocidad de la chapa con puntería asistida justo antes del golpe
+        const assistCap = a.aimAssist && b.kind === KIND.BALL ? a : b.aimAssist && a.kind === KIND.BALL ? b : null;
+        const assistV = assistCap ? [assistCap.vx, assistCap.vz] : null;
         // si una de las dos va llevada con la palma, empuja sin rebote (no "dispara" a la otra)
         const e = a.drag || b.drag ? 0 : Math.min(a.e, b.e);
         const J = (-(1 + e) * rv) / (ia + ib);
@@ -227,6 +230,18 @@ export class World {
         // tiro "por arriba" del tirachinas: cuanto más subiste la mano, más se eleva
         if (a.kind === KIND.BALL && b.loft) a.vy = Math.max(a.vy, -rv * 0.95 * b.loft);
         if (b.kind === KIND.BALL && a.loft) b.vy = Math.max(b.vy, -rv * 0.95 * a.loft);
+        // puntería asistida (penaltis): el balón sale en la dirección en la que iba la chapa
+        {
+          const cap = a.kind === KIND.BALL ? b : a.kind !== KIND.BALL && b.kind === KIND.BALL ? a : null;
+          const bl = cap === a ? b : a;
+          if (assistCap && cap === assistCap && bl.kind === KIND.BALL) {
+            // y con la fuerza del toque (si no, un toque con ángulo da de refilón y sale flojo)
+            const cs = Math.hypot(assistV[0], assistV[1]) || 1;
+            const sp = Math.max(Math.hypot(bl.vx, bl.vz), cs * 1.15);
+            bl.vx = (assistV[0] / cs) * sp; bl.vz = (assistV[1] / cs) * sp;
+            cap.aimAssist = false;
+          }
+        }
         // golpe muy fuerte con la chapa normal: a veces el balón se levanta (y puede irse por encima del larguero)
         if (-rv > HARD_HIT && (a.kind === KIND.BALL || b.kind === KIND.BALL) && !a.flipped && !b.flipped && !a.kin && !b.kin) {
           const ball = a.kind === KIND.BALL ? a : b;
