@@ -25,7 +25,7 @@ function flickPower(fingerSpeed) {
 }
 const SLING_GAIN = 11; // tirachinas: m/s por metro de estirón
 const PINCH_ON = 0.018, PINCH_OFF = 0.035;
-const MOVE_LIMIT = 0.05; // con la palma, cada chapa se mueve como mucho esto desde donde estaba al empezar el turno
+const MOVE_LIMIT = 0.06; // con la palma, cada arrastre llega como mucho a esto (la que lleva el balón: por turno)
 const PALM_HEIGHT = 0.07; // la palma tiene que ir a ras de mesa (como mucho a esta altura)
 
 // ---------- Opciones (se recuerdan en este navegador) ----------
@@ -222,9 +222,9 @@ function syncMeshes(dt) {
       const target = b.flipped ? 1 : 0;
       m.userData.flip += (target - m.userData.flip) * Math.min(1, dt * 10);
       m.rotation.x = m.userData.flip * Math.PI;
-      m.position.y = m.userData.flip * (m.userData.h || 0.0065);
+      m.position.y = m.userData.flip * (m.userData.h || 0.0065) + (b.drag ? 0.004 : 0);
       // "vida": respiran y se inclinan un poco hacia el balón cuando están quietas (solo visual)
-      if (!b.flipped && b.vx === 0 && b.vz === 0 && world.ball) {
+      if (!b.flipped && !b.drag && b.vx === 0 && b.vz === 0 && world.ball) {
         const tt = performance.now() / 1000 + m.userData.phase;
         const dx = world.ball.x - b.x, dz = world.ball.z - b.z, d = Math.hypot(dx, dz) || 1;
         const lean = Math.max(0, 1 - d / 0.25) * 0.09;
@@ -308,51 +308,121 @@ function shown(o) {
   return true;
 }
 
-// ---------- Menú (se abre con el botón MENÚ, todo se pulsa con el dedo) ----------
+// ---------- Menú con submenús. Se abre delante de tus ojos, a la altura de la vista ----------
 let menuOpen = false;
 const menu = new THREE.Group();
-menu.position.set(0, 0.36, FIELD.L / 2 - 0.02); // flota por encima de la mesa, a la vista
-menu.rotation.x = -0.12;
 menu.visible = false;
-root.add(menu);
-{
-  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.525), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false }));
-  bg.position.y = -0.113;
-  bg.position.z = -0.003;
-  menu.add(bg);
-}
+scene.add(menu);
+const menuBg = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false, transparent: true, opacity: 0.94 }));
+menuBg.renderOrder = 4;
+menu.add(menuBg);
+const menuTitle = textPanel(0.3, 0.045, 2000);
+menu.add(menuTitle);
 const ballKeys = Object.keys(BALL_TYPES);
-const menuItems = [];
-function menuItem(i, labelFn, onPress, color = '#2f3a48') {
-  const make = () => makeButton(labelFn(), 0.21, 0.034, color);
-  const b = make();
-  b.position.set(0, 0.115 - i * 0.045, 0);
-  b.userData.onPress = () => { onPress(); relabel(); };
-  const relabel = () => {
-    const nb = make();
-    b.remove(b.userData.panel);
-    b.add(nb.userData.panel);
-    b.userData.panel = nb.userData.panel;
-  };
-  b.userData.relabel = relabel;
-  menu.add(b);
-  buttons.push(b);
-  menuItems.push(b);
-  return b;
-}
-menuItem(0, () => '▶  Seguir jugando', () => closeMenu(), '#1f8a3e');
-menuItem(1, () => `Música: ${settings.music ? 'SÍ' : 'NO'}`, () => { settings.music = !settings.music; toggleMusic(settings.music); saveSettings(); });
-menuItem(2, () => `Ambiente grada: ${settings.crowd ? 'SÍ' : 'NO'}`, () => { settings.crowd = !settings.crowd; crowdOn(); crowdVolume(settings.crowd ? 1 : 0); saveSettings(); });
-menuItem(3, () => `Gradas: ${settings.stands ? 'SÍ' : 'NO'}`, () => { settings.stands = !settings.stands; stadium.group.visible = settings.stands; saveSettings(); });
-menuItem(4, () => `Balón: ${BALL_TYPES[settings.ball].name}`, () => setBall(ballKeys[(ballKeys.indexOf(settings.ball) + 1) % ballKeys.length]));
-menuItem(5, () => `Cielo (VR): ${settings.sky === 'night' ? 'NOCHE' : 'ATARDECER'}`, () => { settings.sky = settings.sky === 'night' ? 'sunset' : 'night'; applySky(); saveSettings(); });
-menuItem(6, () => `Fuerza del dedo: ${settings.finger.toUpperCase()}`, () => { const o = ['suave', 'normal', 'fuerte']; settings.finger = o[(o.indexOf(settings.finger) + 1) % 3]; saveSettings(); });
 const surfKeys = Object.keys(SURFACES);
-menuItem(7, () => `Campo: ${SURFACES[settings.surface].name}`, () => { setSurface(surfKeys[(surfKeys.indexOf(settings.surface) + 1) % surfKeys.length]); saveSettings(); });
-menuItem(8, () => `Tu portero: ${settings.keeper === 'auto' ? 'AUTOMÁTICO' : 'PALANCA'}`, () => { settings.keeper = settings.keeper === 'auto' ? 'manual' : 'auto'; applyKeeperMode(); saveSettings(); });
-menuItem(9, () => `Mano de tiro: ${settings.shootHand === 'right' ? 'DERECHA' : 'IZQUIERDA'}`, () => { settings.shootHand = settings.shootHand === 'right' ? 'left' : 'right'; saveSettings(); });
-menuItem(10, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
-function openMenu() { menuOpen = true; menu.visible = true; aim.visible = false; for (const it of menuItems) it.userData.relabel(); }
+const cycle = (arr, v) => arr[(arr.indexOf(v) + 1) % arr.length];
+const yes = (v) => (v ? 'SÍ' : 'NO');
+const PAGES = {
+  main: {
+    title: 'CAMPIONI',
+    items: () => [
+      ['▶  Seguir jugando', () => closeMenu(), '#1f8a3e'],
+      ['Partido  ›', () => showPage('partido')],
+      ['Sonido  ›', () => showPage('sonido')],
+      ['Estadio  ›', () => showPage('estadio')],
+      ['Controles  ›', () => showPage('controles')],
+      ['✕  Salir del juego', () => exitGame(), '#b3263a'],
+    ],
+  },
+  partido: {
+    title: 'PARTIDO',
+    items: () => [
+      [`Balón: ${BALL_TYPES[settings.ball].name}`, () => setBall(cycle(ballKeys, settings.ball))],
+      [`Campo: ${SURFACES[settings.surface].name}`, () => { setSurface(cycle(surfKeys, settings.surface)); saveSettings(); }],
+      ['↺  Empezar de nuevo', () => startMatch(), '#7a4fd1'],
+      ['‹  Atrás', () => showPage('main'), '#444c58'],
+    ],
+  },
+  sonido: {
+    title: 'SONIDO',
+    items: () => [
+      [`Música: ${yes(settings.music)}`, () => { settings.music = !settings.music; toggleMusic(settings.music); saveSettings(); }],
+      [`Ambiente de grada: ${yes(settings.crowd)}`, () => { settings.crowd = !settings.crowd; crowdOn(); crowdVolume(settings.crowd ? 1 : 0); saveSettings(); }],
+      ['‹  Atrás', () => showPage('main'), '#444c58'],
+    ],
+  },
+  estadio: {
+    title: 'ESTADIO',
+    items: () => [
+      [`Gradas de la mesa: ${yes(settings.stands)}`, () => { settings.stands = !settings.stands; stadium.group.visible = settings.stands; saveSettings(); }],
+      [`Cielo (VR): ${settings.sky === 'night' ? 'NOCHE' : 'ATARDECER'}`, () => { settings.sky = settings.sky === 'night' ? 'sunset' : 'night'; applySky(); saveSettings(); }],
+      ['‹  Atrás', () => showPage('main'), '#444c58'],
+    ],
+  },
+  controles: {
+    title: 'CONTROLES',
+    items: () => [
+      [`Mano de tiro: ${settings.shootHand === 'right' ? 'DERECHA' : 'IZQUIERDA'}`, () => { settings.shootHand = settings.shootHand === 'right' ? 'left' : 'right'; saveSettings(); }],
+      [`Fuerza del dedo: ${settings.finger.toUpperCase()}`, () => { settings.finger = cycle(['suave', 'normal', 'fuerte'], settings.finger); saveSettings(); }],
+      [`Tu portero: ${settings.keeper === 'auto' ? 'AUTOMÁTICO' : 'PALANCA'}`, () => { settings.keeper = settings.keeper === 'auto' ? 'manual' : 'auto'; applyKeeperMode(); saveSettings(); }],
+      ['‹  Atrás', () => showPage('main'), '#444c58'],
+    ],
+  },
+};
+const BTN_W = 0.3, BTN_H = 0.052, GAP = 0.014;
+let menuPage = 'main';
+let menuButtons = [];
+function showPage(name) {
+  menuPage = name;
+  for (const b of menuButtons) { menu.remove(b); buttons.splice(buttons.indexOf(b), 1); }
+  menuButtons = [];
+  const items = PAGES[name].items();
+  const total = items.length * BTN_H + (items.length - 1) * GAP;
+  items.forEach(([label, fn, color = '#2f3a48'], k) => {
+    const b = makeButton(label, BTN_W, BTN_H, color);
+    b.position.set(0, total / 2 - BTN_H / 2 - k * (BTN_H + GAP), 0.002);
+    // al pulsar: hace lo suyo y se redibuja la página (para ver el valor nuevo)
+    b.userData.onPress = () => { fn(); if (menuOpen && menuPage === name) showPage(name); };
+    menu.add(b);
+    buttons.push(b);
+    menuButtons.push(b);
+  });
+  // el menú se dibuja siempre por encima de todo (nunca lo tapa la mesa ni el estadio)
+  menu.traverse((o) => {
+    if (!o.material) return;
+    o.material.depthTest = false;
+    o.renderOrder = o === menuBg ? 20 : 21;
+  });
+  menuBg.scale.set(BTN_W + 0.04, total + 0.1, 1);
+  menuBg.position.set(0, 0.022, 0);
+  menuTitle.position.set(0, total / 2 + 0.042, 0.002);
+  menuTitle.userData.draw((g, w, h) => {
+    g.fillStyle = '#ffd34d'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `900 ${Math.round(h * 0.62)}px system-ui, sans-serif`;
+    g.fillText(PAGES[name].title, w / 2, h / 2 + 2);
+  });
+}
+// colocar el menú delante de los ojos, a 45 cm, mirándote
+function placeMenu() {
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  const head = new THREE.Vector3(), dir = new THREE.Vector3();
+  cam.getWorldPosition(head);
+  cam.getWorldDirection(dir);
+  if (renderer.xr.isPresenting) {
+    // en el visor: recto delante, a la altura de los ojos (no hay que mirar abajo)
+    dir.y = 0;
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1);
+    dir.normalize();
+    menu.position.copy(head).addScaledVector(dir, 0.45);
+    menu.position.y = head.y - 0.04;
+    menu.lookAt(head.x, menu.position.y, head.z);
+  } else {
+    // en el escritorio: en el centro de la vista
+    menu.position.copy(head).addScaledVector(dir, 0.75);
+    menu.lookAt(head);
+  }
+}
+function openMenu() { menuOpen = true; placeMenu(); showPage('main'); menu.visible = true; aim.visible = false; }
 function closeMenu() { menuOpen = false; menu.visible = false; }
 function exitGame() {
   closeMenu();
@@ -969,10 +1039,13 @@ const limitRings = [0, 1].map(() => {
   return r;
 });
 function releaseDrag(h) {
+  h.hover = null;
   if (h.drag) {
     const b = h.drag;
+    b.drag = null;
     b.vx = 0; b.vz = 0;
-    // sin balón: puedes moverla todas las veces que quieras (cada arrastre, hasta 5 cm desde donde quedó).
+    if (world.owner === b && world.ball) { world.ball.vx = 0; world.ball.vz = 0; } // el balón se queda pegado, no sale rodando
+    // sin balón: puedes moverla todas las veces que quieras (cada arrastre, hasta MOVE_LIMIT desde donde quedó).
     // La que lleva el balón pegado mantiene el límite del turno (si no, se conduciría por todo el campo).
     if (world.owner !== b) { b.ax = b.x; b.az = b.z; }
     h.drag = null;
@@ -983,30 +1056,39 @@ function selectByTouch(tip) {
   const t = myCapNear(tip.x, tip.z, 0.004);
   if (t && t !== selected && t.kind === 'cap') select(t);
 }
-function palmUpdate(h, i, open, palm, dt) {
-  const can = open && palm && palm.y < PALM_HEIGHT && palm.y > -0.06 && !menuOpen && (state === 'aim' || state === 'cpu');
-  if (!can) { releaseDrag(h); limitRings[i].visible = false; return false; }
+// La palma lleva la chapa como si estuviera pegada debajo: la chapa sigue a la mano (a velocidad suave),
+// empuja lo que encuentra y, si tiene el balón, lo conduce. Se coge con la mano abierta a ras de mesa
+// y se suelta levantando la mano o cerrándola.
+function palmUpdate(h, i, open, closing, palm, dt) {
+  const active = palm && !menuOpen && (state === 'aim' || state === 'cpu');
+  if (!active) { releaseDrag(h); limitRings[i].visible = false; return false; }
+  if (h.drag && (palm.y > 0.1 || closing)) { releaseDrag(h); limitRings[i].visible = false; return false; }
   if (!h.drag) {
+    h.hover = null;
+    if (!open || palm.y > PALM_HEIGHT || palm.y < -0.06) { limitRings[i].visible = false; return false; }
     let best = null, bd = Infinity;
     for (const b of world.bodies) {
       if (b.team !== 0 || b.kin || b.kind === 'ball' || b === lockedCap) continue;
       if (hands.some((o) => o !== h && o.drag === b)) continue;
-      const d = Math.hypot(palm.x - b.x, palm.z - b.z) - b.r;
-      if (d < MAGNET.reach + 0.01 && d < bd) { bd = d; best = b; }
+      const d = Math.hypot(palm.x - b.x, palm.z - b.z);
+      if (d < bd) { bd = d; best = b; }
     }
-    if (!best) { limitRings[i].visible = false; return false; }
+    if (!best || bd > best.r + 0.06) { limitRings[i].visible = false; return false; }
+    if (bd > best.r + 0.035) { h.hover = best; limitRings[i].visible = false; return false; } // cerca: se marca en azul
+    // ¡cogida! mantiene la distancia a la palma (no salta hacia la mano)
     h.drag = best;
+    h.off = { x: best.x - palm.x, z: best.z - palm.z };
+    if (world.owner !== best) { best.ax = best.x; best.az = best.z; }
+    best.drag = { tx: best.x, tz: best.z };
+    buttonSound();
   }
   const b = h.drag;
-  // destino: la palma, pero sin salir del círculo de su sitio
-  let tx = palm.x, tz = palm.z;
+  let tx = palm.x + h.off.x, tz = palm.z + h.off.z;
   const ox = tx - b.ax, oz = tz - b.az, ol = Math.hypot(ox, oz);
   if (ol > MOVE_LIMIT) { tx = b.ax + (ox / ol) * MOVE_LIMIT; tz = b.az + (oz / ol) * MOVE_LIMIT; }
-  const k = 12;
-  let vx = (tx - b.x) * k, vz = (tz - b.z) * k;
-  const sp = Math.hypot(vx, vz), max = 0.9;
-  if (sp > max) { vx *= max / sp; vz *= max / sp; }
-  b.vx = vx; b.vz = vz; // la física la mueve y empuja (si lleva el balón pegado, lo conduce)
+  tx = Math.max(-FIELD.W / 2 + b.r, Math.min(FIELD.W / 2 - b.r, tx));
+  tz = Math.max(-FIELD.L / 2 + b.r, Math.min(FIELD.L / 2 - b.r, tz));
+  b.drag.tx = tx; b.drag.tz = tz;
   limitRings[i].visible = true;
   limitRings[i].position.set(b.ax, 0.0009, b.az);
   return true;
@@ -1040,7 +1122,7 @@ function updateXRInput(now, dt) {
     if (leverUpdate(h, grabbing, released, [handCenter, knuckle, palm, pinchPt])) { releaseDrag(h); limitRings[hi].visible = false; return; }
     // mano que mueve: palma para arrastrar, dedo para elegir (nunca dispara)
     if (isMover(h)) {
-      if (palmUpdate(h, hi, open, palm, dt)) return;
+      if (palmUpdate(h, hi, open, h.pinching || curl.curled >= 2, palm, dt)) return;
       if (state === 'aim') { pokePilots(tip); selectByTouch(tip); }
     }
     if (!isShooter(h)) { pushHist(h.hist['index-finger-tip'], now, tip); return; }
@@ -1228,9 +1310,10 @@ renderer.setAnimationLoop((t) => {
     const ud = meshes[i]?.userData;
     if (!ud) return;
     const mine = state === 'aim' && b.team === 0 && (!lockedCap || b === lockedCap);
+    const palmOn = hands.some((h) => h.drag === b || h.hover === b);
     if (ud.glow) {
-      ud.glow.material.opacity = mine ? (b === selected ? 0.95 : pulse * 0.6) : 0;
-      ud.glow.material.color.set(b === selected ? 0xffe066 : 0x8fffb0);
+      ud.glow.material.opacity = palmOn ? 0.95 : mine ? (b === selected ? 0.95 : pulse * 0.6) : 0;
+      ud.glow.material.color.set(palmOn ? 0x6ec8ff : b === selected ? 0xffe066 : 0x8fffb0);
     }
     if (ud.reach) ud.reach.material.opacity = mine ? (b === selected ? 0.55 : 0.18) : (world.owner === b ? 0.35 : 0);
     if (ud.pilot) {
@@ -1266,4 +1349,4 @@ setupXRButtons();
 window.__campioni = { root, renderer, camera, applySky,
   tipWorld: (i) => { const j = hands[i].hand.joints?.['index-finger-tip']; if (!j || !j.visible) return null; const v = new THREE.Vector3(); j.getWorldPosition(v); return v.toArray(); },
   toWorld: (x, y, z) => root.localToWorld(new THREE.Vector3(x, y, z)).toArray(),
-  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, get selected() { return selected; }, setSurface, myKeeper, get cpuPrep() { return cpuPrep; }, select, startPenalty, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };
+  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, get selected() { return selected; }, setSurface, showPage, myKeeper, get cpuPrep() { return cpuPrep; }, select, startPenalty, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };

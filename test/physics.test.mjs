@@ -313,3 +313,17 @@ test('el balón junto al portero automático no provoca una persecución sin fin
   while (t < 3 && !w.settled()) { w.step(1 / 60); t += 1 / 60; }
   assert.ok(w.settled(), 'debe pararse');
 });
+
+test('palma: la chapa llevada sigue a la mano y conduce el balón pegado sin chutarlo', () => {
+  const w = new World();
+  const c = w.add(makeBody(KIND.CAP, 0, 0.1, 0));
+  const ball = w.add(makeBody(KIND.BALL, 0, 0.1 - c.r - 0.0048 - 0.001));
+  c.drag = { tx: 0, tz: 0.03 }; // 7 cm hacia delante
+  for (let t = 0; t < 0.6; t += 1 / 60) w.step(1 / 60);
+  assert.ok(Math.abs(c.z - 0.03) < 0.001, `chapa en ${c.z}`);
+  const gap = Math.hypot(ball.x - c.x, ball.z - c.z) - c.r - ball.r;
+  assert.ok(gap < 0.02, `el balón va con la chapa (separación ${gap})`);
+  c.drag = null; c.vx = c.vz = 0;
+  for (let t = 0; t < 1; t += 1 / 60) w.step(1 / 60);
+  assert.ok(ball.z > -0.05, `no ha salido disparado: ${ball.z}`);
+});

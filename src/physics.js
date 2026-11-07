@@ -39,6 +39,7 @@ export const HEIGHT = { cap: 0.0065, keeper: 0.032 };
 // Portero de futbolín: va en una barra y solo se mueve a lo ancho de su portería.
 // El tuyo lo mueves tú con la palanca (tx); el del rival lo lleva el ordenador (auto).
 export const KEEPER = { range: 0.1, handSpeed: 1.6, autoSpeed: 0.42 };
+const DRAG_SPEED = 0.55; // m/s: velocidad máxima de una chapa llevada con la palma (conduce sin chutar)
 export const CROSSBAR = 0.035;
 const LIFT = 0.55; // con la chapa volteada, parte del golpe se convierte en altura
 const HARD_HIT = 2.0; // m/s: por encima, un golpe normal también puede levantar el balón
@@ -102,7 +103,7 @@ export class World {
   }
 
   settled() {
-    return this.bodies.every((b) => b.kin || (b.vx === 0 && b.vz === 0 && b.y === 0 && b.vy === 0));
+    return this.bodies.every((b) => b.kin || b.drag || (b.vx === 0 && b.vz === 0 && b.y === 0 && b.vy === 0));
   }
 
   // Avanza dt segundos. Devuelve los eventos (choques y gol) ocurridos.
@@ -141,6 +142,15 @@ export class World {
 
   substep(h, ev) {
     const B = this.bodies;
+    // chapas que llevas con la palma: van hacia su objetivo a velocidad suave, empujando lo que encuentren
+    for (const b of B) {
+      if (!b.drag) continue;
+      const dx = b.drag.tx - b.x, dz = b.drag.tz - b.z, d = Math.hypot(dx, dz);
+      const max = DRAG_SPEED * h;
+      const k = d > max ? max / d : 1;
+      b.x += dx * k; b.z += dz * k;
+      b.vx = (dx * k) / h; b.vz = (dz * k) / h;
+    }
     // porteros en su barra (cinemáticos: empujan, pero nada los empuja)
     for (const k of B) {
       if (!k.kin) continue;
@@ -153,7 +163,7 @@ export class World {
     }
     // Rozamiento de Coulomb (tapete) + algo de amortiguación
     for (const b of B) {
-      if (b.kin) continue;
+      if (b.kin || b.drag) continue;
       // vuelo del balón (tiro libre con la chapa volteada)
       if (b.y > 0 || b.vy !== 0) {
         b.vy -= G * h;
@@ -197,7 +207,7 @@ export class World {
         if (b.kind === KIND.BALL && b.y > HEIGHT[a.kind]) continue;
         const d = Math.sqrt(d2);
         const nx = dx / d, nz = dz / d;
-        const ia = a.kin ? 0 : 1 / a.m, ib = b.kin ? 0 : 1 / b.m;
+        const ia = a.kin || a.drag ? 0 : 1 / a.m, ib = b.kin || b.drag ? 0 : 1 / b.m;
         if (ia + ib === 0) continue;
         // separar
         const pen = rr - d;
@@ -292,6 +302,17 @@ export class World {
   applyMagnet(h, ev) {
     const ball = this.ball;
     if (!ball || ball.y > 0.001) return;
+    // conducción: si llevas con la palma una chapa y el balón está en su radio, va pegado a ella
+    for (const c of this.bodies) {
+      if (!c.drag) continue;
+      const dx = ball.x - c.x, dz = ball.z - c.z, dl = Math.hypot(dx, dz) || 1;
+      if (dl - c.r - ball.r > MAGNET.reach) continue;
+      const R = c.r + ball.r + 0.0005;
+      ball.x = c.x + (dx / dl) * R; ball.z = c.z + (dz / dl) * R;
+      ball.vx = c.vx; ball.vz = c.vz;
+      if (this.owner !== c) { this.owner = c; if (ev) this.events.push({ type: 'control', a: c }); }
+      return;
+    }
     const sp = Math.hypot(ball.vx, ball.vz);
     if (sp > MAGNET.maxSpeed) { if (sp > MAGNET.maxSpeed * 1.5) this.owner = null; return; }
     let best = null, bd = MAGNET.reach;
