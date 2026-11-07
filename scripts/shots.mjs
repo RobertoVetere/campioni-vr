@@ -1,0 +1,23 @@
+// Capturas del estadio (escritorio): vista de juego, vista panorámica y atardecer.
+import puppeteer from 'puppeteer-core';
+import { spawn } from 'child_process';
+const srv = spawn('npx', ['vite', 'preview', '--port', '4181', '--strictPort'], { cwd: new URL('..', import.meta.url).pathname });
+await new Promise((r) => setTimeout(r, 2500));
+const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', protocolTimeout: 120000, args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-proxy-server'] });
+const p = await b.newPage();
+await p.setViewport({ width: 1100, height: 650 });
+const errs = [];
+p.on('pageerror', (e) => errs.push(e.message));
+p.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('sounds')) errs.push(m.text()); });
+await p.goto('http://localhost:4181/', { waitUntil: 'load', timeout: 60000 });
+await new Promise((r) => setTimeout(r, 2500));
+await p.evaluate(() => { document.getElementById('ui').style.display = 'none'; });
+await p.screenshot({ path: '/tmp/claude-0/sp/arena-juego.png' });
+await p.evaluate(() => { const c = window.__campioni.camera; c.position.set(0, 1.6, 2.5); c.lookAt(0, 9, -60); });
+await new Promise((r) => setTimeout(r, 1500));
+await p.screenshot({ path: '/tmp/claude-0/sp/arena-noche.png' });
+await p.evaluate(() => { const g = window.__campioni; g.settings.sky = 'sunset'; g.applySky(); });
+await new Promise((r) => setTimeout(r, 1500));
+await p.screenshot({ path: '/tmp/claude-0/sp/arena-atardecer.png' });
+console.log('ERRORES:', errs.length ? errs.join('\n') : 'ninguno');
+await b.close(); srv.kill(); process.exit(0);

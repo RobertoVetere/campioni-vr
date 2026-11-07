@@ -16,7 +16,7 @@ const SLING_GAIN = 11; // tirachinas: m/s por metro de estirón
 const PINCH_ON = 0.018, PINCH_OFF = 0.035;
 
 // ---------- Opciones (se recuerdan en este navegador) ----------
-const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo' };
+const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('campioni') || '{}')); } catch (e) { /* sin almacenamiento */ }
 function saveSettings() { try { localStorage.setItem('campioni', JSON.stringify(settings)); } catch (e) { /* nada */ } }
 
@@ -46,6 +46,11 @@ scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x2a3a2a, 0.75));
 const arena = buildArena();
 const room = arena.group;
 scene.add(room);
+function applySky() {
+  const s = arena.setSky(settings.sky);
+  scene.fog = room.visible ? new THREE.FogExp2(arena.fogColor, 0.007) : null;
+  if (typeof sun !== 'undefined') sun.color.set(s.sun);
+}
 
 // Todo lo de la mesa cuelga de "root": se puede recolocar y subir/bajar
 const root = new THREE.Group();
@@ -60,6 +65,7 @@ Object.assign(sun.shadow.camera, { left: -0.6, right: 0.6, top: 0.7, bottom: -0.
 sun.shadow.bias = -0.0008;
 sun.shadow.normalBias = 0.002;
 root.add(sun, sun.target);
+applySky();
 const rim = new THREE.DirectionalLight(0x9fc3ff, 0.8); // contraluz frío desde el fondo
 rim.position.set(-0.6, 0.9, -1.0);
 root.add(rim, rim.target);
@@ -235,7 +241,8 @@ menu.rotation.x = -0.35;
 menu.visible = false;
 root.add(menu);
 {
-  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.3), new THREE.MeshBasicMaterial({ color: 0x0b1118, transparent: true, opacity: 0.88 }));
+  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.345), new THREE.MeshBasicMaterial({ color: 0x0b1118, transparent: true, opacity: 0.88 }));
+  bg.position.y = -0.022;
   bg.position.z = -0.003;
   menu.add(bg);
 }
@@ -263,7 +270,8 @@ menuItem(1, () => `Música: ${settings.music ? 'SÍ' : 'NO'}`, () => { settings.
 menuItem(2, () => `Ambiente grada: ${settings.crowd ? 'SÍ' : 'NO'}`, () => { settings.crowd = !settings.crowd; crowdOn(); crowdVolume(settings.crowd ? 1 : 0); saveSettings(); });
 menuItem(3, () => `Gradas: ${settings.stands ? 'SÍ' : 'NO'}`, () => { settings.stands = !settings.stands; stadium.group.visible = settings.stands; saveSettings(); });
 menuItem(4, () => `Balón: ${BALL_TYPES[settings.ball].name}`, () => setBall(ballKeys[(ballKeys.indexOf(settings.ball) + 1) % ballKeys.length]));
-menuItem(5, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
+menuItem(5, () => `Cielo (VR): ${settings.sky === 'night' ? 'NOCHE' : 'ATARDECER'}`, () => { settings.sky = settings.sky === 'night' ? 'sunset' : 'night'; applySky(); saveSettings(); });
+menuItem(6, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
 function openMenu() { menuOpen = true; menu.visible = true; aim.visible = false; }
 function closeMenu() { menuOpen = false; menu.visible = false; }
 function exitGame() {
@@ -800,6 +808,7 @@ function onXRStart() {
   scene.background = passthrough ? null : bgColor;
   room.visible = !passthrough;
   tableLegs.visible = !passthrough;
+  applySky();
   placeRequested = true;
 }
 function onXREnd() {
@@ -809,6 +818,7 @@ function onXREnd() {
   scene.background = bgColor;
   room.visible = true;
   tableLegs.visible = true;
+  applySky();
   root.position.set(0, 0.8, 0);
   root.rotation.set(0, 0, 0);
 }
@@ -853,7 +863,7 @@ drawBoard();
 setupXRButtons();
 
 // Para pruebas automáticas
-window.__campioni = { root, renderer,
+window.__campioni = { root, renderer, camera, applySky,
   tipWorld: (i) => { const j = hands[i].hand.joints?.['index-finger-tip']; if (!j || !j.visible) return null; const v = new THREE.Vector3(); j.getWorldPosition(v); return v.toArray(); },
   toWorld: (x, y, z) => root.localToWorld(new THREE.Vector3(x, y, z)).toArray(),
   world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };
