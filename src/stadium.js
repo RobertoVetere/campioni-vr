@@ -84,8 +84,7 @@ export function buildStadium() {
   stand(W / 2, 0, L * 0.95, 'z', 1, 0, 3, mixed, true);
   // fondo lejano: la grada del rival, la más alta
   stand(0, -L / 2 - goalD, W * 0.98, 'x', 0, -1, 4, () => (Math.random() < 0.85 ? 1 : 0), true, 0.03);
-  // tu fondo: baja y estrecha, detrás de tu portería (los tuyos)
-  stand(0, L / 2 + goalD, W * 0.42, 'x', 0, 1, 1, () => (Math.random() < 0.9 ? 0 : 1), false, 0.03);
+  // tu fondo queda libre: ahí está la palanca de tu portero
 
   // Público: dos InstancedMesh (cuerpo + cabeza) con colores de equipo
   const bodyGeo = new THREE.BoxGeometry(0.0075, 0.011, 0.005);

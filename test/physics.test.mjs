@@ -251,3 +251,35 @@ test('un golpe muy fuerte en juego a veces levanta el balón; uno suave nunca', 
   assert.equal(maxY(1.2), 0);
   assert.ok(maxY(2.6) > 0.01, 'el tiro a tope debería levantarlo alguna vez');
 });
+
+test('portero del rival (automático) para un tiro flojo al centro', () => {
+  const w = setupMatch(new World(), 0);
+  for (const b of w.bodies) if (b.kind === 'cap') { b.x = (b.x > 0 ? 1 : -1) * 0.25; }
+  const ball = w.ball;
+  ball.x = 0.05; ball.z = -0.2; ball.vz = -1.2; ball.vx = -0.05;
+  run(w);
+  assert.equal(w.goal, null, 'debería pararlo');
+});
+
+test('tu portero sigue la palanca (tx) y nadie lo empuja', () => {
+  const w = setupMatch(new World(), 0);
+  const k = w.bodies.find((b) => b.kind === 'keeper' && b.team === 0);
+  k.tx = 0.06;
+  for (let t = 0; t < 0.3; t += 1 / 60) w.step(1 / 60);
+  assert.ok(Math.abs(k.x - 0.06) < 0.002, `x ${k.x}`);
+  const z0 = k.z;
+  const ball = w.ball; ball.x = 0.06; ball.z = k.z - 0.08; ball.vz = 2.0;
+  for (let t = 0; t < 0.5; t += 1 / 60) w.step(1 / 60);
+  assert.equal(k.z, z0);
+  assert.ok(ball.vz < 0, 'el balón rebota en el portero');
+});
+
+test('tirachinas hacia arriba (loft): el balón se eleva', () => {
+  const w = new World();
+  const ball = w.add(makeBody(KIND.BALL, 0, 0.05));
+  const c = w.add(makeBody(KIND.CAP, 0, 0.08, 0));
+  c.loft = 0.8; c.vz = -1.6;
+  let maxY = 0;
+  for (let t = 0; t < 1; t += 1 / 60) { w.step(1 / 60); maxY = Math.max(maxY, ball.y); }
+  assert.ok(maxY > 0.02, `altura ${maxY}`);
+});

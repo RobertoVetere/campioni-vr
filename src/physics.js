@@ -21,7 +21,7 @@ export const KIND = { CAP: 'cap', KEEPER: 'keeper', BALL: 'ball' };
 
 const PROPS = {
   cap: { r: 0.0135, m: 0.002, mu: 0.34, e: 0.82 },
-  keeper: { r: 0.019, m: 0.006, mu: 0.45, e: 0.6 },
+  keeper: { r: 0.021, m: 0.03, mu: 0.45, e: 0.6 },
   ball: { r: 0.0048, m: 0.0009, mu: 0.16, e: 0.9 },
 };
 
@@ -34,7 +34,11 @@ export const BALL_TYPES = {
 };
 
 // Alturas (para saber si el balón por el aire pasa por encima)
-export const HEIGHT = { cap: 0.0065, keeper: 0.024 };
+export const HEIGHT = { cap: 0.0065, keeper: 0.032 };
+
+// Portero de futbolín: va en una barra y solo se mueve a lo ancho de su portería.
+// El tuyo lo mueves tú con la palanca (tx); el del rival lo lleva el ordenador (auto).
+export const KEEPER = { range: 0.1, handSpeed: 1.6, autoSpeed: 0.42 };
 export const CROSSBAR = 0.035;
 const LIFT = 0.55; // con la chapa volteada, parte del golpe se convierte en altura
 const HARD_HIT = 2.0; // m/s: por encima, un golpe normal también puede levantar el balón
@@ -78,6 +82,7 @@ export class World {
     this.foulAt = null; // dónde fue la falta {x, z}
     this.owner = null; // chapa que tiene el balón pegado
     this.magnet = true;
+    this.goalsOn = true;
     // superficie: multiplicadores de rozamiento y "desvío" aleatorio (arena, baches)
     this.surf = { mu: { cap: 1, keeper: 1, ball: 1 }, jitter: { cap: 0, keeper: 0, ball: 0 } };
     this.events = [];
@@ -97,7 +102,7 @@ export class World {
   }
 
   settled() {
-    return this.bodies.every((b) => b.vx === 0 && b.vz === 0 && b.y === 0 && b.vy === 0);
+    return this.bodies.every((b) => b.kin || (b.vx === 0 && b.vz === 0 && b.y === 0 && b.vy === 0));
   }
 
   // Avanza dt segundos. Devuelve los eventos (choques y gol) ocurridos.
@@ -136,8 +141,19 @@ export class World {
 
   substep(h, ev) {
     const B = this.bodies;
+    // porteros en su barra (cinemáticos: empujan, pero nada los empuja)
+    for (const k of B) {
+      if (!k.kin) continue;
+      if (k.auto) k.tx = this.autoKeeperTarget(k);
+      const want = Math.max(-KEEPER.range, Math.min(KEEPER.range, k.tx ?? k.x));
+      const max = (k.auto ? KEEPER.autoSpeed : KEEPER.handSpeed) * h;
+      const step = Math.max(-max, Math.min(max, want - k.x));
+      k.x += step; k.z = k.homeZ;
+      k.vx = Math.abs(step) > 1e-7 ? step / h : 0; k.vz = 0;
+    }
     // Rozamiento de Coulomb (tapete) + algo de amortiguación
     for (const b of B) {
+      if (b.kin) continue;
       // vuelo del balón (tiro libre con la chapa volteada)
       if (b.y > 0 || b.vy !== 0) {
         b.vy -= G * h;
@@ -181,7 +197,8 @@ export class World {
         if (b.kind === KIND.BALL && b.y > HEIGHT[a.kind]) continue;
         const d = Math.sqrt(d2);
         const nx = dx / d, nz = dz / d;
-        const ia = 1 / a.m, ib = 1 / b.m;
+        const ia = a.kin ? 0 : 1 / a.m, ib = b.kin ? 0 : 1 / b.m;
+        if (ia + ib === 0) continue;
         // separar
         const pen = rr - d;
         const ca = (pen * ia) / (ia + ib), cb = (pen * ib) / (ia + ib);
@@ -196,8 +213,11 @@ export class World {
         // chapa volteada contra el balón: lo levanta según la fuerza del golpe
         if (a.kind === KIND.BALL && b.flipped) a.vy = Math.max(a.vy, -rv * LIFT);
         if (b.kind === KIND.BALL && a.flipped) b.vy = Math.max(b.vy, -rv * LIFT);
+        // tiro "por arriba" del tirachinas: cuanto más subiste la mano, más se eleva
+        if (a.kind === KIND.BALL && b.loft) a.vy = Math.max(a.vy, -rv * 0.95 * b.loft);
+        if (b.kind === KIND.BALL && a.loft) b.vy = Math.max(b.vy, -rv * 0.95 * a.loft);
         // golpe muy fuerte con la chapa normal: a veces el balón se levanta (y puede irse por encima del larguero)
-        if (-rv > HARD_HIT && (a.kind === KIND.BALL || b.kind === KIND.BALL) && !a.flipped && !b.flipped) {
+        if (-rv > HARD_HIT && (a.kind === KIND.BALL || b.kind === KIND.BALL) && !a.flipped && !b.flipped && !a.kin && !b.kin) {
           const ball = a.kind === KIND.BALL ? a : b;
           if (ball.y < 0.001) ball.vy = Math.max(ball.vy, (-rv - HARD_HIT) * 1.2 * (0.3 + Math.random() * 1.2));
         }
@@ -216,6 +236,7 @@ export class World {
     }
     // Choques con las bandas
     for (const b of B) {
+      if (b.kin) continue;
       for (const w of this.walls) {
         // la línea de gol frena chapas siempre, y el balón solo si va por encima del larguero
         if (w[4] === 2 && b.kind === KIND.BALL && b.y + b.r < CROSSBAR) continue;
@@ -248,12 +269,24 @@ export class World {
     if (bl && Math.abs(bl.z) > this.f.L / 2 && bl.y + bl.r > CROSSBAR) { bl.y = CROSSBAR - bl.r; if (bl.vy > 0) bl.vy = -bl.vy * 0.3; }
     // ¿Gol? El garbanzo tiene que cruzar entero la línea
     const ball = this.ball;
-    if (ball && !this.goal && Math.abs(ball.x) < this.f.goalW / 2) {
+    if (ball && this.goalsOn && !this.goal && Math.abs(ball.x) < this.f.goalW / 2) {
       const hl = this.f.L / 2;
       if (ball.z > hl + ball.r) this.goal = { scorer: 1 }; // en la portería del jugador
       else if (ball.z < -hl - ball.r) this.goal = { scorer: 0 };
       if (this.goal && ev) this.events.push({ type: 'goal', scorer: this.goal.scorer });
     }
+  }
+
+  // portero del ordenador: se coloca donde va a llegar el balón (con su velocidad limitada)
+  autoKeeperTarget(k) {
+    const ball = this.ball;
+    if (!ball) return 0;
+    const towards = Math.sign(k.homeZ) * ball.vz > 0.15;
+    if (towards) {
+      const t = (k.homeZ - ball.z) / ball.vz;
+      if (t > 0 && t < 2) return ball.x + ball.vx * t;
+    }
+    return ball.x * 0.45;
   }
 
   applyMagnet(h, ev) {
@@ -298,7 +331,8 @@ export function setupMatch(world, kickoff = 0, ballType = 'garbanzo') {
   const hl = world.f.L / 2;
   for (const team of [0, 1]) {
     const s = team === 0 ? 1 : -1; // el jugador está en z > 0
-    world.add(makeBody(KIND.KEEPER, 0, s * (hl - 0.03), team, 1));
+    const k = world.add(makeBody(KIND.KEEPER, 0, s * (hl - 0.03), team, 1));
+    k.kin = true; k.homeZ = k.z; k.tx = 0; k.auto = team === 1;
     const pos = [
       [-0.13, 0.27], [0.13, 0.27], // defensas
       [-0.09, 0.11], [0.09, 0.11], // delanteros

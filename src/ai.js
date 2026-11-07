@@ -13,7 +13,7 @@ function candidates(world, team) {
   const ownGoalZ = -dir * (world.f.L / 2);
   const ballNearHome = Math.abs(ball.z - ownGoalZ) < 0.2;
   // el portero solo sale si el garbanzo está cerca de casa
-  let mine = world.bodies.filter((b) => b.team === team && (b.kind !== KIND.KEEPER || ballNearHome));
+  let mine = world.bodies.filter((b) => b.team === team && b.kind !== KIND.KEEPER && !b.kin); // el portero va en su barra
   // en un tiro libre solo puede tirar la chapa volteada
   const flipped = world.bodies.filter((b) => b.team === team && (b.flipped || b.locked));
   if (flipped.length) mine = flipped;

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.js';
-import { World, setupMatch, shoot, MAX_SHOT, FIELD, BALL_TYPES, MAGNET } from './physics.js';
+import { World, setupMatch, shoot, MAX_SHOT, FIELD, BALL_TYPES, MAGNET, KEEPER } from './physics.js';
 import { buildArena } from './arena.js';
 import { SURFACES, surfaceTexture } from './surfaces.js';
 import { think } from './ai.js';
@@ -25,9 +25,11 @@ function flickPower(fingerSpeed) {
 }
 const SLING_GAIN = 11; // tirachinas: m/s por metro de estirón
 const PINCH_ON = 0.018, PINCH_OFF = 0.035;
+const MOVE_LIMIT = 0.05; // con la palma, cada chapa se mueve como mucho esto desde donde estaba al empezar el turno
+const PALM_HEIGHT = 0.07; // la palma tiene que ir a ras de mesa (como mucho a esta altura)
 
 // ---------- Opciones (se recuerdan en este navegador) ----------
-const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal', surface: 'tapete' };
+const settings = { music: true, stands: true, crowd: true, ball: 'garbanzo', sky: 'night', finger: 'normal', surface: 'tapete', keeper: 'manual' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('campioni') || '{}')); } catch (e) { /* sin almacenamiento */ }
 function saveSettings() { try { localStorage.setItem('campioni', JSON.stringify(settings)); } catch (e) { /* nada */ } }
 
@@ -153,7 +155,12 @@ let meshes = [], shadows = [];
 const bodyLayer = new THREE.Group();
 root.add(bodyLayer);
 
+function applyKeeperMode() {
+  const k = world.bodies.find((b) => b.kin && b.team === 0);
+  if (k) k.auto = settings.keeper === 'auto';
+}
 function rebuildBodies() {
+  applyKeeperMode();
   bodyLayer.clear();
   meshes = []; shadows = [];
   for (const b of world.bodies) {
@@ -171,7 +178,7 @@ function rebuildBodies() {
       reach.rotation.x = -Math.PI / 2; reach.position.y = 0.0007;
       m.add(reach);
       m.userData.reach = reach;
-      if (b.team === 0) {
+      if (b.team === 0 && !b.kin) {
         // piloto: palito fino + bombilla que brilla
         const pilot = new THREE.Group();
         const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.0007, 0.0007, 0.032, 6), new THREE.MeshBasicMaterial({ color: 0xcfd8e3, toneMapped: false }));
@@ -200,7 +207,11 @@ function syncMeshes(dt) {
     shadows[i].position.set(b.x + 0.002, 0.0004, b.z + 0.002);
     shadows[i].scale.setScalar(1 + (b.y || 0) * 30);
     shadows[i].material.opacity = 0.5 / (1 + (b.y || 0) * 60);
-    if (b.kind !== 'ball') {
+    if (b.kin) {
+      // portero en su barra: no gira ni se inclina; el del rival mira hacia el otro lado
+      m.rotation.set(0, b.team === 0 ? 0 : Math.PI, 0);
+      m.position.y = 0;
+    } else if (b.kind !== 'ball') {
       // volteo animado para el tiro libre
       const target = b.flipped ? 1 : 0;
       m.userData.flip += (target - m.userData.flip) * Math.min(1, dt * 10);
@@ -223,7 +234,7 @@ function syncMeshes(dt) {
         tmpQ.setFromAxisAngle(tmpAxis, (s * dt) / b.r);
         m.userData.ball.quaternion.premultiply(tmpQ);
       }
-    } else {
+    } else if (!b.kin) {
       m.rotation.y = -b.angle;
     }
   });
@@ -299,8 +310,8 @@ menu.rotation.x = -0.12;
 menu.visible = false;
 root.add(menu);
 {
-  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.435), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false }));
-  bg.position.y = -0.068;
+  const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.48), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false }));
+  bg.position.y = -0.09;
   bg.position.z = -0.003;
   menu.add(bg);
 }
@@ -332,7 +343,8 @@ menuItem(5, () => `Cielo (VR): ${settings.sky === 'night' ? 'NOCHE' : 'ATARDECER
 menuItem(6, () => `Fuerza del dedo: ${settings.finger.toUpperCase()}`, () => { const o = ['suave', 'normal', 'fuerte']; settings.finger = o[(o.indexOf(settings.finger) + 1) % 3]; saveSettings(); });
 const surfKeys = Object.keys(SURFACES);
 menuItem(7, () => `Campo: ${SURFACES[settings.surface].name}`, () => { setSurface(surfKeys[(surfKeys.indexOf(settings.surface) + 1) % surfKeys.length]); saveSettings(); });
-menuItem(8, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
+menuItem(8, () => `Tu portero: ${settings.keeper === 'auto' ? 'AUTOMÁTICO' : 'PALANCA'}`, () => { settings.keeper = settings.keeper === 'auto' ? 'manual' : 'auto'; applyKeeperMode(); saveSettings(); });
+menuItem(9, () => '✕  Salir del juego', () => exitGame(), '#b3263a');
 function openMenu() { menuOpen = true; menu.visible = true; aim.visible = false; for (const it of menuItems) it.userData.relabel(); }
 function closeMenu() { menuOpen = false; menu.visible = false; }
 function exitGame() {
@@ -357,13 +369,15 @@ const aim = new THREE.Group();
 aim.visible = false;
 aim.position.y = 0.004;
 root.add(aim);
-function showAim(b, vx, vz) {
+function showAim(b, vx, vz, loft = 0) {
   const s = Math.hypot(vx, vz);
   if (s < 1e-3) { aim.visible = false; return; }
   const len = 0.03 + (s / MAX_SHOT) * 0.18;
   aim.visible = true;
   aim.position.set(b.x, 0.004, b.z);
+  aim.rotation.order = 'YXZ';
   aim.rotation.y = Math.atan2(-vx, -vz);
+  aim.rotation.x = loft * 0.75; // la flecha se levanta si el tiro va por arriba
   aim.userData.shaft.scale.z = len;
   aim.userData.shaft.position.z = -len / 2;
   aim.userData.head.position.z = -len;
@@ -434,6 +448,13 @@ let lastFlick = '';
 let selected = null; // chapa elegida por el jugador para el siguiente toque
 let lockedCap = null; // en tiro libre o penalti solo puede tirar esta
 
+// dónde estaba cada chapa al empezar el turno (la palma solo la mueve un poco desde ahí)
+function setAnchors() {
+  for (const b of world.bodies) { b.ax = b.x; b.az = b.z; }
+  world.shotTeam = null; // mover con la palma nunca es falta
+  world.foul = null;
+}
+
 function autoSelect() {
   const ball = world.ball;
   let best = null, bd = Infinity;
@@ -501,7 +522,8 @@ function startFreeKick(team) {
   touchesLeft = 1;
   touchInfo = `TIRO LIBRE · ${TEAMS[team].name}`;
   if (team === 0) { state = 'aim'; say('Tiro libre: dale a la chapa volteada, el balón sale por el aire'); }
-  else { state = 'cpu'; timer = 1.0; cpuGen = null; cpuShot = null; say('Tiro libre del rival…'); }
+  else { state = 'cpu'; timer = 2.4; cpuPrep = true; cpuGen = null; cpuShot = null; say('Tiro libre del rival… ¡haz barrera!'); }
+  setAnchors();
   drawBoard();
 }
 
@@ -536,7 +558,8 @@ function startPenalty(team) {
   whistle('goal');
   touchInfo = `¡PENALTI! · ${TEAMS[team].name}`;
   if (team === 0) { state = 'aim'; say('Penalti: chuta con la chapa del punto'); }
-  else { state = 'cpu'; timer = 1.4; cpuGen = null; cpuShot = null; say('Penalti para el rival…'); }
+  else { state = 'cpu'; timer = 2.4; cpuPrep = true; cpuGen = null; cpuShot = null; say('Penalti para el rival… ¡agarra la palanca!'); }
+  setAnchors();
   drawBoard();
 }
 
@@ -554,7 +577,9 @@ function giveTurn(team, touches = TOUCHES) {
   touchesLeft = touches;
   nextTouch();
 }
+let cpuPrep = false;
 function nextTouch() {
+  setAnchors();
   const n = TOUCHES - touchesLeft + 1;
   touchInfo = `${turn === 0 ? 'TÚ' : 'RIVAL'} · TOQUE ${n}/${TOUCHES}`;
   if (turn === 0) {
@@ -562,8 +587,9 @@ function nextTouch() {
     if (!selected || selected.team !== 0) autoSelect();
     say(touchesLeft > 1 ? 'Dale con el dedo · toca un piloto para cambiar de chapa' : (lastFlick ? `¡Ahora tira! · ${lastFlick}` : '¡Ahora tira! (o cambia de chapa con su piloto)'));
   } else {
-    state = 'cpu'; timer = 0.7; cpuGen = null; cpuShot = null;
-    say(touchesLeft > 1 ? 'El rival prepara la jugada…' : 'El rival va a tirar…');
+    // unos segundos para defender: coloca tus chapas con la palma y tu portero con la palanca
+    state = 'cpu'; timer = 2.6; cpuPrep = true; cpuGen = null; cpuShot = null;
+    say(touchesLeft > 1 ? 'El rival prepara la jugada… ¡coloca tu defensa!' : 'El rival va a tirar… ¡a la palanca!');
   }
   drawBoard();
 }
@@ -607,6 +633,11 @@ function afterGoalOrEnd() {
 }
 
 function updateGame(dt) {
+  if (state === 'aim' || state === 'cpu' || state === 'foul') {
+    world.goalsOn = false;
+    world.step(dt);
+    world.goalsOn = true;
+  }
   if (state === 'moving') {
     timer += dt;
     const ev = world.step(dt);
@@ -635,6 +666,7 @@ function updateGame(dt) {
       drawBoard();
     } else if (world.settled() || timer > 10) {
       world.stopAll();
+      for (const b of world.bodies) b.loft = 0;
       if (freeKick) { freeKick = false; lockedCap = null; for (const b of world.bodies) { b.flipped = false; b.locked = false; } }
       if (world.foul !== null) {
         // falta: se acaba el turno y saca el rival
@@ -671,7 +703,15 @@ function updateGame(dt) {
     if (blink !== touchInfo) { touchInfo = blink; drawBoard(); }
     if (fi >= rec.length - 1 && replayT > (rec.length - 1) / recFps + 0.5) { lastFrame = null; afterGoalOrEnd(); }
   } else if (state === 'cpu') {
-    if (timer > 0) { timer -= dt; return; }
+    if (timer > 0) {
+      timer -= dt;
+      if (cpuPrep) {
+        const c = `RIVAL · ¡DEFIENDE! ${Math.max(1, Math.ceil(timer))}`;
+        if (c !== touchInfo) { touchInfo = c; drawBoard(); }
+        if (timer <= 0) { cpuPrep = false; touchInfo = `RIVAL · TOQUE ${TOUCHES - touchesLeft + 1}/${TOUCHES}`; drawBoard(); for (const h of hands) releaseDrag(h); }
+      }
+      return;
+    }
     if (!cpuGen) cpuGen = think(world, 1, { noise: 0.07 });
     if (!cpuShot) {
       const t0 = performance.now();
@@ -768,7 +808,7 @@ function velOf(hist, now) {
 function myCapNear(x, z, maxD) {
   let best = null, bd = maxD;
   for (const b of world.bodies) {
-    if (b.team !== 0 || menuOpen) continue;
+    if (b.team !== 0 || menuOpen || b.kin) continue;
     if (lockedCap && b !== lockedCap) continue;
     const d = Math.hypot(b.x - x, b.z - z) - b.r;
     if (d < bd) { bd = d; best = b; }
@@ -797,7 +837,7 @@ function tryFlick(p, vel, prev, capH = 0.06) {
   const a = prev || p;
   let b = null, bd = Infinity;
   for (const c of world.bodies) {
-    if (c.team !== 0 || menuOpen || c.kind === 'ball') continue;
+    if (c.team !== 0 || menuOpen || c.kind === 'ball' || c.kin) continue;
     if (lockedCap && c !== lockedCap) continue;
     const d = segDist(a.x, a.z, p.x, p.z, c.x, c.z) - c.r;
     if (d < 0.016 && d < bd) { bd = d; b = c; }
@@ -824,7 +864,7 @@ function slingUpdate(holder, pinchOn, p) {
   // pellizcar cerca de una chapa, estirar hacia atrás y soltar
   if (!holder.sling && pinchOn && p && p.y < 0.07) {
     const b = myCapNear(p.x, p.z, 0.025);
-    if (b) { select(b); holder.sling = { b }; }
+    if (b) { select(b); holder.sling = { b, y0: p.y }; }
   }
   if (holder.sling) {
     const b = holder.sling.b;
@@ -832,13 +872,15 @@ function slingUpdate(holder, pinchOn, p) {
       holder.sling.vx = (b.x - p.x) * SLING_GAIN;
       holder.sling.vz = (b.z - p.z) * SLING_GAIN;
       holder.sling.pull = Math.hypot(b.x - p.x, b.z - p.z);
-      showAim(b, holder.sling.vx, holder.sling.vz);
+      // subir la mano mientras estiras = tiro por arriba (0 raso, 1 muy elevado)
+      holder.sling.loft = Math.max(0, Math.min(1, (p.y - holder.sling.y0) / 0.07));
+      showAim(b, holder.sling.vx, holder.sling.vz, holder.sling.loft);
     }
     if (!pinchOn) {
       const s = holder.sling;
       holder.sling = null;
       aim.visible = false;
-      if (s.pull > 0.012 && state === 'aim') fire(s.b, s.vx, s.vz);
+      if (s.pull > 0.012 && state === 'aim') { s.b.loft = s.loft || 0; fire(s.b, s.vx, s.vz); }
     }
   }
 }
@@ -847,7 +889,7 @@ function slingUpdate(holder, pinchOn, p) {
 const PILOT_Y = 0.045;
 function pokePilots(p) {
   for (const b of world.bodies) {
-    if (b.team !== 0 || b.kind === 'ball' || b === selected || menuOpen) continue;
+    if (b.team !== 0 || b.kind === 'ball' || b.kin || b === selected || menuOpen) continue;
     if (lockedCap && b !== lockedCap) continue;
     if (Math.hypot(p.x - b.x, p.y - PILOT_Y, p.z - b.z) < 0.02) select(b);
   }
@@ -872,18 +914,79 @@ function pokeButtons(p, now) {
   }
 }
 
-function updateXRInput(now) {
-  for (const h of hands) {
+// ---------- Palanca del portero ----------
+const myKeeper = () => world.bodies.find((b) => b.kin && b.team === 0);
+function gripPos(k) { return new THREE.Vector3(k.x, 0.014, k.homeZ + 0.155); }
+function leverUpdate(h, closed, handPt) {
+  const k = myKeeper();
+  if (!k || state === 'replay' || state === 'menu' || menuOpen) { h.lever = false; return false; }
+  if (!h.lever && closed && handPt.distanceTo(gripPos(k)) < 0.045) { h.lever = true; buttonSound(); }
+  if (h.lever && !closed) { h.lever = false; applyKeeperMode(); }
+  if (h.lever) { k.auto = false; k.tx = Math.max(-KEEPER.range, Math.min(KEEPER.range, handPt.x)); }
+  return h.lever;
+}
+
+// ---------- Palma: arrastrar una chapa (con límite) y conducir el balón ----------
+const limitRings = [0, 1].map(() => {
+  const r = new THREE.Mesh(new THREE.RingGeometry(MOVE_LIMIT - 0.0012, MOVE_LIMIT, 48), new THREE.MeshBasicMaterial({ color: 0x9fd8ff, transparent: true, opacity: 0.45, depthWrite: false, toneMapped: false }));
+  r.rotation.x = -Math.PI / 2; r.position.y = 0.0009; r.visible = false;
+  root.add(r);
+  return r;
+});
+function releaseDrag(h) {
+  if (h.drag) { h.drag.vx = 0; h.drag.vz = 0; h.drag = null; }
+}
+function palmUpdate(h, i, open, palm, dt) {
+  const can = open && palm && palm.y < PALM_HEIGHT && palm.y > -0.06 && !menuOpen && (state === 'aim' || (state === 'cpu' && cpuPrep));
+  if (!can) { releaseDrag(h); limitRings[i].visible = false; return false; }
+  if (!h.drag) {
+    let best = null, bd = Infinity;
+    for (const b of world.bodies) {
+      if (b.team !== 0 || b.kin || b.kind === 'ball' || b === lockedCap) continue;
+      if (hands.some((o) => o !== h && o.drag === b)) continue;
+      const d = Math.hypot(palm.x - b.x, palm.z - b.z) - b.r;
+      if (d < MAGNET.reach + 0.01 && d < bd) { bd = d; best = b; }
+    }
+    if (!best) { limitRings[i].visible = false; return false; }
+    h.drag = best;
+  }
+  const b = h.drag;
+  // destino: la palma, pero sin salir del círculo de su sitio
+  let tx = palm.x, tz = palm.z;
+  const ox = tx - b.ax, oz = tz - b.az, ol = Math.hypot(ox, oz);
+  if (ol > MOVE_LIMIT) { tx = b.ax + (ox / ol) * MOVE_LIMIT; tz = b.az + (oz / ol) * MOVE_LIMIT; }
+  const k = 12;
+  let vx = (tx - b.x) * k, vz = (tz - b.z) * k;
+  const sp = Math.hypot(vx, vz), max = 0.9;
+  if (sp > max) { vx *= max / sp; vz *= max / sp; }
+  b.vx = vx; b.vz = vz; // la física la mueve y empuja (si lleva el balón pegado, lo conduce)
+  limitRings[i].visible = true;
+  limitRings[i].position.set(b.ax, 0.0009, b.az);
+  return true;
+}
+
+function updateXRInput(now, dt) {
+  hands.forEach((h, hi) => {
     h.tipBall.visible = false;
     const tip = jointLocal(h.hand, 'index-finger-tip', v1);
-    if (!tip) { h.sling = null; continue; }
+    if (!tip) { h.sling = null; h.lever = false; releaseDrag(h); limitRings[hi].visible = false; return; }
     const thumb = jointLocal(h.hand, 'thumb-tip', v2);
     const pd = thumb ? tip.distanceTo(thumb) : 1;
     if (!h.pinching && pd < PINCH_ON) h.pinching = true;
     else if (h.pinching && pd > PINCH_OFF) h.pinching = false;
     const pinchPt = thumb ? tip.clone().add(thumb).multiplyScalar(0.5) : tip.clone();
+    const wrist = jointLocal(h.hand, 'wrist', new THREE.Vector3());
+    const midTip = jointLocal(h.hand, 'middle-finger-tip', new THREE.Vector3());
+    const knuckle = jointLocal(h.hand, 'middle-finger-phalanx-proximal', new THREE.Vector3());
+    const palm = wrist && knuckle ? wrist.clone().add(knuckle).multiplyScalar(0.5) : null;
+    const reach = wrist && midTip ? midTip.distanceTo(wrist) : 0;
+    const fist = wrist && midTip && reach < 0.09 && tip.distanceTo(wrist) < 0.1;
+    const open = !h.pinching && reach > 0.12 && pd > 0.045;
 
     pokeButtons(tip, now);
+    // la palanca tiene prioridad: si la tienes agarrada, esa mano no hace otra cosa
+    if (leverUpdate(h, h.pinching || fist, palm || pinchPt)) { releaseDrag(h); limitRings[hi].visible = false; return; }
+    if (palmUpdate(h, hi, open, palm, dt)) return;
     if (state === 'aim') pokePilots(tip);
     if (state === 'aim') slingUpdate(h, h.pinching, pinchPt);
 
@@ -903,7 +1006,7 @@ function updateXRInput(now) {
     h.tipBall.visible = true;
     h.tipBall.position.copy(root.localToWorld(tip.clone()));
     h.tipBall.material.color.set(s > FLICK_MIN ? 0x5dff8a : 0xffffff);
-  }
+  });
   for (const pd of pads) {
     if (!pd.connected || pd.isHand) continue;
     pd.grip.getWorldPosition(v1);
@@ -940,6 +1043,10 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     if (o) { buttonSound(); o.userData.onPress(); return; }
   }
   mouse.down = true;
+  {
+    const pt = pointerTable(e), k = myKeeper();
+    if (pt && k && pt.distanceTo(gripPos(k)) < 0.04) { mouse.lever = true; return; }
+  }
   if (state === 'aim') {
     const pt = pointerTable(e);
     const b = pt && myCapNear(pt.x, pt.z, 0.006);
@@ -949,10 +1056,18 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   }
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
+  if (mouse.lever) { const pt = pointerTable(e), k = myKeeper(); if (pt && k) k.tx = Math.max(-KEEPER.range, Math.min(KEEPER.range, pt.x)); return; }
   if (mouse.down && state === 'aim') slingUpdate(mouse, true, pointerTable(e));
+});
+addEventListener('keydown', (e) => {
+  const k = myKeeper();
+  if (!k) return;
+  if (e.key === 'ArrowLeft') k.tx = Math.max(-KEEPER.range, (k.tx ?? k.x) - 0.012);
+  if (e.key === 'ArrowRight') k.tx = Math.min(KEEPER.range, (k.tx ?? k.x) + 0.012);
 });
 addEventListener('pointerup', (e) => {
   mouse.down = false;
+  mouse.lever = false;
   if (mouse.sling) slingUpdate(mouse, false, pointerTable(e));
 });
 
@@ -1031,7 +1146,7 @@ renderer.setAnimationLoop((t) => {
   const now = performance.now();
   if (renderer.xr.isPresenting) {
     if (placeRequested) { placeInFront(); placeRequested = false; }
-    updateXRInput(now);
+    updateXRInput(now, dt);
   }
   updateGame(dt);
   if (state !== 'replay') syncMeshes(dt);
@@ -1084,4 +1199,4 @@ setupXRButtons();
 window.__campioni = { root, renderer, camera, applySky,
   tipWorld: (i) => { const j = hands[i].hand.joints?.['index-finger-tip']; if (!j || !j.visible) return null; const v = new THREE.Vector3(); j.getWorldPosition(v); return v.toArray(); },
   toWorld: (x, y, z) => root.localToWorld(new THREE.Vector3(x, y, z)).toArray(),
-  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, get selected() { return selected; }, setSurface, select, startPenalty, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };
+  world, get state() { return state; }, get touchesLeft() { return touchesLeft; }, get score() { return score; }, get freeKick() { return freeKick; }, get selected() { return selected; }, setSurface, myKeeper, get cpuPrep() { return cpuPrep; }, select, startPenalty, startMatch, startFreeKick, openMenu, setBall, settings, fire: (i, vx, vz) => fire(world.bodies[i], vx, vz) };

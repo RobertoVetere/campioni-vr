@@ -1,0 +1,23 @@
+// Captura del muñeco con su palanca (tu portería) y del rival; prueba la palanca con el teclado.
+import puppeteer from 'puppeteer-core';
+import { spawn } from 'child_process';
+const srv = spawn('npx', ['vite', 'preview', '--port', '4183', '--strictPort'], { cwd: new URL('..', import.meta.url).pathname });
+await new Promise((r) => setTimeout(r, 2500));
+const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', protocolTimeout: 120000, args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-proxy-server'] });
+const p = await b.newPage();
+await p.setViewport({ width: 900, height: 650 });
+const errs = [];
+p.on('pageerror', (e) => errs.push(e.message));
+await p.goto('http://localhost:4183/', { waitUntil: 'load', timeout: 60000 });
+await new Promise((r) => setTimeout(r, 2000));
+await p.evaluate(() => { document.getElementById('ui').style.display = 'none'; const g = window.__campioni; g.startMatch(); const c = g.camera; c.position.set(0.12, 0.92, 0.82); c.lookAt(0, 0.8, 0.4); });
+for (let i = 0; i < 5; i++) await p.keyboard.press('ArrowRight');
+await new Promise((r) => setTimeout(r, 1500));
+const kx = await p.evaluate(() => window.__campioni.myKeeper().x.toFixed(3));
+await p.screenshot({ path: '/tmp/claude-0/sp/portero.png' });
+await p.evaluate(() => { const c = window.__campioni.camera; c.position.set(-0.1, 0.92, -0.75); c.lookAt(0, 0.8, -0.4); });
+await new Promise((r) => setTimeout(r, 800));
+await p.screenshot({ path: '/tmp/claude-0/sp/portero-rival.png' });
+console.log('portero x tras 5 flechas:', kx);
+console.log('ERRORES:', errs.length ? errs.join('\n') : 'ninguno');
+await b.close(); srv.kill(); process.exit(0);

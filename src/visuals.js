@@ -200,20 +200,45 @@ export function buildCap(body) {
   const g = new THREE.Group();
   const r = body.r;
   if (body.kind === 'keeper') {
-    // dos tapones grandes apilados, envueltos en celo
-    const tape = new THREE.MeshStandardMaterial({ color: 0xf4f1e6, roughness: 0.4, flatShading: true });
-    const side = new THREE.Mesh(new THREE.CylinderGeometry(r, r, KEEPER_H, 10), tape);
-    side.position.y = KEEPER_H / 2;
-    g.add(side);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.0, 0.0012, 4, 10), new THREE.MeshStandardMaterial({ color: TEAMS[body.team].keeper }));
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = KEEPER_H / 2;
-    g.add(ring);
-    const top = new THREE.Mesh(new THREE.CircleGeometry(r * 0.97, 10), new THREE.MeshStandardMaterial({ map: shirtTexture(body.team, body.num, true), roughness: 0.5 }));
-    top.rotation.x = -Math.PI / 2;
-    top.position.y = KEEPER_H + 0.0002;
-    g.add(top);
-    g.userData.h = KEEPER_H;
+    // Muñeco de futbolín: peana, piernas, cuerpo con camiseta, cabeza, brazos abiertos y guantes,
+    // ensartado en su barra. La barra sale por detrás de la portería hasta la empuñadura.
+    const T = TEAMS[body.team];
+    const flat = (c, extra = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6, flatShading: true, ...extra });
+    const shirt = flat(T.keeper), skin = flat(0xf1c27d), dark = flat(0x22262c), glove = flat(0xffffff);
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.75, r * 0.8, 0.003, 10), dark);
+    base.position.y = 0.0015; g.add(base);
+    for (const x of [-0.004, 0.004]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.011, 0.005), dark);
+      leg.position.set(x, 0.0085, 0); g.add(leg);
+    }
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.013, 0.009), shirt);
+    torso.position.y = 0.0205; g.add(torso);
+    const num = new THREE.Mesh(new THREE.PlaneGeometry(0.009, 0.009), new THREE.MeshStandardMaterial({ map: shirtTexture(body.team, 1, true), roughness: 0.6 }));
+    num.position.set(0, 0.021, -0.0046); num.rotation.y = Math.PI; g.add(num);
+    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.0052, 0), skin);
+    head.position.y = 0.0325; g.add(head);
+    const hair = new THREE.Mesh(new THREE.IcosahedronGeometry(0.0054, 0), dark);
+    hair.position.set(0, 0.0345, 0.001); hair.scale.set(1, 0.6, 1); g.add(hair);
+    const arms = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.004, 0.005), shirt);
+    arms.position.y = 0.024; g.add(arms);
+    for (const x of [-0.019, 0.019]) {
+      const gl = new THREE.Mesh(new THREE.IcosahedronGeometry(0.0038, 0), glove);
+      gl.position.set(x, 0.0255, 0); g.add(gl);
+    }
+    // barra y empuñadura (van hacia atrás: +z para el tuyo, -z para el rival)
+    const back = 1; // en local siempre hacia atrás; el muñeco del rival va girado 180º
+    const ROD = 0.135;
+    const metal = new THREE.MeshStandardMaterial({ color: 0xc9d3e0, metalness: 0.8, roughness: 0.3 });
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.0016, 0.0016, ROD, 8), metal);
+    rod.rotation.x = Math.PI / 2; rod.position.set(0, 0.014, (back * ROD) / 2); g.add(rod);
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.0065, 0.0065, 0.04, 10), flat(body.team === 0 ? 0x1f5fd1 : 0xc8102e, { roughness: 0.9 }));
+    grip.rotation.x = Math.PI / 2; grip.position.set(0, 0.014, back * (ROD + 0.02)); g.add(grip);
+    const knob = new THREE.Mesh(new THREE.IcosahedronGeometry(0.0075, 1), flat(0x111111));
+    knob.position.set(0, 0.014, back * (ROD + 0.042)); g.add(knob);
+    g.userData.grip = grip;
+    g.userData.gripZ = back * (ROD + 0.02);
+    g.rotation.y = body.team === 0 ? 0 : Math.PI; // mira al campo
+    g.userData.h = 0.037;
   } else {
     const metal = metals[body.team] || metals[0];
     const side = new THREE.Mesh(crimpedSide(r, CAP_H), metal);
