@@ -82,7 +82,7 @@ rim.position.set(-0.6, 0.9, -1.0);
 root.add(rim, rim.target);
 function shadowsOn(obj) {
   obj.traverse((o) => {
-    if (!o.isMesh || o.material?.transparent || o.material?.isMeshBasicMaterial) return;
+    if (!o.isMesh || o.userData.noShadow || o.material?.transparent || o.material?.isMeshBasicMaterial) return;
     o.castShadow = true; o.receiveShadow = true;
   });
 }

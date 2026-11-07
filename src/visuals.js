@@ -67,19 +67,22 @@ export function buildTable() {
   // bandas
   const rail = new THREE.MeshStandardMaterial({ color: 0x6b3f1f, roughness: 0.9, flatShading: true });
   const rh = 0.016, rt = 0.012;
+  // grosor de la goma: la madera empieza DETRÁS de ella. Si se solapan, sus caras quedan en el
+  // mismo plano y el visor parpadea entre las dos (z-fighting), que en VR marea mucho.
+  const ct = 0.006;
   const addBox = (w, d, x, z, mat = rail, h = rh) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     m.position.set(x, h / 2, z);
     g.add(m);
     return m;
   };
-  addBox(rt, L + rt * 2, -W / 2 - rt / 2, 0);
-  addBox(rt, L + rt * 2, W / 2 + rt / 2, 0);
+  addBox(rt, L + (rt + ct) * 2, -W / 2 - ct - rt / 2, 0);
+  addBox(rt, L + (rt + ct) * 2, W / 2 + ct + rt / 2, 0);
   const sideW = (W - goalW) / 2;
   // Capa de goma en todo el borde del estadio: es lo que hace rebotar.
   // Se ilumina un instante cuando algo choca (userData.cushions).
   const cushions = [];
-  const ct = 0.006, ch = 0.011;
+  const ch = 0.011;
   const addCushion = (x1, z1, x2, z2) => {
     const len = Math.hypot(x2 - x1, z2 - z1);
     const mat = new THREE.MeshStandardMaterial({ color: 0xf2a516, roughness: 0.7, flatShading: true, emissive: 0xffd36b, emissiveIntensity: 0 });
@@ -88,6 +91,7 @@ export function buildTable() {
     const ox = x1 === x2 ? Math.sign(x1) * ct / 2 : 0;
     const oz = z1 === z2 ? Math.sign(z1) * ct / 2 : 0;
     m.position.set((x1 + x2) / 2 + ox, ch / 2, (z1 + z2) / 2 + oz);
+    m.userData.noShadow = true;
     g.add(m);
     cushions.push({ mesh: m, x1, z1, x2, z2, flash: 0, base: m.scale.clone() });
   };
@@ -102,8 +106,8 @@ export function buildTable() {
   g.userData.wood = wood;
   g.userData.rail = rail;
   for (const s of [1, -1]) {
-    addBox(sideW + rt, rt, -(goalW / 2 + sideW / 2) - rt / 2, s * (L / 2 + rt / 2));
-    addBox(sideW + rt, rt, goalW / 2 + sideW / 2 + rt / 2, s * (L / 2 + rt / 2));
+    addBox(sideW + ct, rt, -(goalW / 2 + (sideW + ct) / 2), s * (L / 2 + ct + rt / 2));
+    addBox(sideW + ct, rt, goalW / 2 + (sideW + ct) / 2, s * (L / 2 + ct + rt / 2));
     // portería: postes, larguero y red
     const post = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
     const ph = 0.035, pr = 0.0018;
