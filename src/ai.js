@@ -3,7 +3,7 @@
 import { KIND } from './physics.js';
 
 const SIM_DT = 1 / 120;
-const SIM_MAX = 5; // segundos simulados por candidato
+const SIM_MAX = 3.5; // segundos simulados por candidato (menos = el rival piensa más rápido)
 
 function candidates(world, team) {
   const ball = world.ball;

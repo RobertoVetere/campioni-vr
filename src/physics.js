@@ -296,7 +296,8 @@ export class World {
     if (sp > MAGNET.maxSpeed) { if (sp > MAGNET.maxSpeed * 1.5) this.owner = null; return; }
     let best = null, bd = MAGNET.reach;
     for (const c of this.bodies) {
-      if (c === ball || c.flipped) continue;
+      // el portero de barra no "atrapa" (si no, el balón le persigue y él al balón, sin fin)
+      if (c === ball || c.flipped || c.kin) continue;
       const reach = c.kind === 'keeper' ? MAGNET.reach * 0.6 : MAGNET.reach;
       const d = Math.hypot(ball.x - c.x, ball.z - c.z) - c.r - ball.r;
       if (d < reach && d < bd) { bd = d; best = c; }
@@ -305,10 +306,16 @@ export class World {
     // punto de contacto en el lado donde está el balón
     const dx = ball.x - best.x, dz = ball.z - best.z, dl = Math.hypot(dx, dz) || 1;
     const tx = best.x + (dx / dl) * (best.r + ball.r + 0.0005), tz = best.z + (dz / dl) * (best.r + ball.r + 0.0005);
-    ball.vx += ((tx - ball.x) * MAGNET.pull - ball.vx * MAGNET.damp) * h;
-    ball.vz += ((tz - ball.z) * MAGNET.pull - ball.vz * MAGNET.damp) * h;
-    if (Math.hypot(tx - ball.x, tz - ball.z) < 0.004 && Math.hypot(ball.vx, ball.vz) < 0.06) {
-      ball.x = tx; ball.z = tz; ball.vx = 0; ball.vz = 0;
+    const dist = Math.hypot(tx - ball.x, tz - ball.z);
+    if (sp < 0.12) {
+      // ya casi parado: se acerca sin velocidad (sin rodar) y se queda quieto pegado.
+      // Antes el imán y el rozamiento se peleaban y el balón no paraba nunca de girar despacito.
+      const step = Math.min(dist, 0.08 * h);
+      if (dist > 1e-6) { ball.x += ((tx - ball.x) / dist) * step; ball.z += ((tz - ball.z) / dist) * step; }
+      ball.vx = 0; ball.vz = 0;
+    } else {
+      ball.vx += ((tx - ball.x) * MAGNET.pull - ball.vx * MAGNET.damp) * h;
+      ball.vz += ((tz - ball.z) * MAGNET.pull - ball.vz * MAGNET.damp) * h;
     }
     if (this.owner !== best) { this.owner = best; if (ev) this.events.push({ type: 'control', a: best }); }
   }

@@ -172,7 +172,7 @@ test('tiro libre: con la chapa volteada el balón sale por el aire y pasa por en
     if (w.settled()) break;
   }
   assert.ok(maxY > 0.02, `altura ${maxY}`);
-  assert.ok(ball.z < -0.1, `el balón ha pasado la barrera: ${ball.z}`);
+  assert.ok(ball.z < wall.z - wall.r, `el balón ha pasado la barrera: ${ball.z}`);
   assert.equal(ball.y, 0, 'vuelve al suelo');
 });
 
@@ -282,4 +282,34 @@ test('tirachinas hacia arriba (loft): el balón se eleva', () => {
   let maxY = 0;
   for (let t = 0; t < 1; t += 1 / 60) { w.step(1 / 60); maxY = Math.max(maxY, ball.y); }
   assert.ok(maxY > 0.02, `altura ${maxY}`);
+});
+
+test('imán: un balón casi pegado a una chapa se queda QUIETO (no gira sin fin)', () => {
+  for (const off of [0.0045, 0.006, 0.012, 0.025]) {
+    const w = new World();
+    const c = w.add(makeBody(KIND.CAP, 0, 0, 0));
+    const ball = w.add(makeBody(KIND.BALL, 0, -(c.r + ball_r() + off)));
+    ball.vz = 0.01;
+    let t = 0;
+    while (t < 2 && !w.settled()) { w.step(1 / 60); t += 1 / 60; }
+    assert.ok(w.settled(), `no se para con separación ${off}`);
+  }
+  function ball_r() { return 0.0048; }
+});
+
+test('saque inicial: nada se queda moviéndose (el juego puede seguir)', () => {
+  const w = setupMatch(new World(), 0);
+  let t = 0;
+  while (t < 2 && !w.settled()) { w.step(1 / 60); t += 1 / 60; }
+  assert.ok(w.settled(), 'tras el saque todo debe estar quieto');
+});
+
+test('el balón junto al portero automático no provoca una persecución sin fin', () => {
+  const w = setupMatch(new World(), 0);
+  const k = w.bodies.find((b) => b.kin && b.team === 1);
+  const ball = w.ball;
+  ball.x = k.x + 0.03; ball.z = k.z + 0.01; ball.vx = -0.2;
+  let t = 0;
+  while (t < 3 && !w.settled()) { w.step(1 / 60); t += 1 / 60; }
+  assert.ok(w.settled(), 'debe pararse');
 });

@@ -161,6 +161,12 @@ function applyKeeperMode() {
 }
 function rebuildBodies() {
   applyKeeperMode();
+  // las chapas de antes ya no existen: si una mano seguía "agarrando" una, bloqueaba el toque
+  if (typeof hands !== 'undefined') for (const h of hands) { h.drag = null; h.sling = null; }
+  if (typeof pads !== 'undefined') for (const p of pads) p.sling = null;
+  if (typeof mouse !== 'undefined') mouse.sling = null;
+  selected = null;
+  lockedCap = null;
   bodyLayer.clear();
   meshes = []; shadows = [];
   for (const b of world.bodies) {
@@ -522,7 +528,7 @@ function startFreeKick(team) {
   touchesLeft = 1;
   touchInfo = `TIRO LIBRE · ${TEAMS[team].name}`;
   if (team === 0) { state = 'aim'; say('Tiro libre: dale a la chapa volteada, el balón sale por el aire'); }
-  else { state = 'cpu'; timer = 2.4; cpuPrep = true; cpuGen = null; cpuShot = null; say('Tiro libre del rival… ¡haz barrera!'); }
+  else { state = 'cpu'; timer = 0.8; cpuPrep = false; cpuGen = null; cpuShot = null; say('Tiro libre del rival… ¡haz barrera!'); }
   setAnchors();
   drawBoard();
 }
@@ -558,7 +564,7 @@ function startPenalty(team) {
   whistle('goal');
   touchInfo = `¡PENALTI! · ${TEAMS[team].name}`;
   if (team === 0) { state = 'aim'; say('Penalti: chuta con la chapa del punto'); }
-  else { state = 'cpu'; timer = 2.4; cpuPrep = true; cpuGen = null; cpuShot = null; say('Penalti para el rival… ¡agarra la palanca!'); }
+  else { state = 'cpu'; timer = 1.0; cpuPrep = false; cpuGen = null; cpuShot = null; say('Penalti para el rival… ¡agarra la palanca!'); }
   setAnchors();
   drawBoard();
 }
@@ -587,8 +593,8 @@ function nextTouch() {
     if (!selected || selected.team !== 0) autoSelect();
     say(touchesLeft > 1 ? 'Dale con el dedo · toca un piloto para cambiar de chapa' : (lastFlick ? `¡Ahora tira! · ${lastFlick}` : '¡Ahora tira! (o cambia de chapa con su piloto)'));
   } else {
-    // unos segundos para defender: coloca tus chapas con la palma y tu portero con la palanca
-    state = 'cpu'; timer = 2.6; cpuPrep = true; cpuGen = null; cpuShot = null;
+    // el rival juega rápido; mientras piensa puedes colocar tu defensa con la palma
+    state = 'cpu'; timer = 0.35; cpuPrep = false; cpuGen = null; cpuShot = null;
     say(touchesLeft > 1 ? 'El rival prepara la jugada… ¡coloca tu defensa!' : 'El rival va a tirar… ¡a la palanca!');
   }
   drawBoard();
@@ -715,9 +721,9 @@ function updateGame(dt) {
     if (!cpuGen) cpuGen = think(world, 1, { noise: 0.07 });
     if (!cpuShot) {
       const t0 = performance.now();
-      while (performance.now() - t0 < 5) {
+      while (performance.now() - t0 < 8) {
         const r = cpuGen.next();
-        if (r.done) { cpuShot = r.value || { body: world.bodies.findIndex((b) => b.team === 1), vx: 0, vz: 0.5 }; timer = 0.6; break; }
+        if (r.done) { cpuShot = r.value || { body: world.bodies.findIndex((b) => b.team === 1 && !b.kin), vx: 0, vz: 0.5 }; timer = 0.45; break; }
       }
       return;
     }
@@ -742,7 +748,7 @@ function showFrame(f, dt) {
     }
     m.position.set(x, b.kind === 'ball' ? y : m.position.y, z);
     shadows[i].position.set(x + 0.002, 0.0004, z + 0.002);
-    if (b.kind !== 'ball') m.rotation.y = -f[i * 4 + 2];
+    if (b.kind !== 'ball' && !b.kin) m.rotation.y = -f[i * 4 + 2];
   });
   // estelas también en la repetición (velocidad sacada de la grabación)
   if (lastFrame && lastFrame !== f) {
@@ -917,11 +923,15 @@ function pokeButtons(p, now) {
 // ---------- Palanca del portero ----------
 const myKeeper = () => world.bodies.find((b) => b.kin && b.team === 0);
 function gripPos(k) { return new THREE.Vector3(k.x, 0.014, k.homeZ + 0.155); }
-function leverUpdate(h, closed, handPt) {
+function leverUpdate(h, closed, opened, pts) {
   const k = myKeeper();
-  if (!k || state === 'replay' || state === 'menu' || menuOpen) { h.lever = false; return false; }
-  if (!h.lever && closed && handPt.distanceTo(gripPos(k)) < 0.045) { h.lever = true; buttonSound(); }
-  if (h.lever && !closed) { h.lever = false; applyKeeperMode(); }
+  if (!k || menuOpen) { h.lever = false; return false; }
+  const g = gripPos(k);
+  const near = pts.some((p) => p && p.distanceTo(g) < 0.055);
+  if (!h.lever && closed && near) { h.lever = true; buttonSound(); }
+  // se suelta solo al abrir la mano del todo (o si te alejas mucho): así no se cae a mitad de parada
+  if (h.lever && (opened || !pts.some((p) => p && p.distanceTo(g) < 0.14))) { h.lever = false; applyKeeperMode(); }
+  const handPt = pts.find((p) => p) || g;
   if (h.lever) { k.auto = false; k.tx = Math.max(-KEEPER.range, Math.min(KEEPER.range, handPt.x)); }
   return h.lever;
 }
@@ -937,7 +947,7 @@ function releaseDrag(h) {
   if (h.drag) { h.drag.vx = 0; h.drag.vz = 0; h.drag = null; }
 }
 function palmUpdate(h, i, open, palm, dt) {
-  const can = open && palm && palm.y < PALM_HEIGHT && palm.y > -0.06 && !menuOpen && (state === 'aim' || (state === 'cpu' && cpuPrep));
+  const can = open && palm && palm.y < PALM_HEIGHT && palm.y > -0.06 && !menuOpen && (state === 'aim' || state === 'cpu');
   if (!can) { releaseDrag(h); limitRings[i].visible = false; return false; }
   if (!h.drag) {
     let best = null, bd = Infinity;
@@ -980,12 +990,13 @@ function updateXRInput(now, dt) {
     const knuckle = jointLocal(h.hand, 'middle-finger-phalanx-proximal', new THREE.Vector3());
     const palm = wrist && knuckle ? wrist.clone().add(knuckle).multiplyScalar(0.5) : null;
     const reach = wrist && midTip ? midTip.distanceTo(wrist) : 0;
-    const fist = wrist && midTip && reach < 0.09 && tip.distanceTo(wrist) < 0.1;
+    const fist = wrist && midTip && reach < 0.115 && tip.distanceTo(wrist) < 0.125;
     const open = !h.pinching && reach > 0.12 && pd > 0.045;
+    const wideOpen = !h.pinching && reach > 0.14 && pd > 0.06;
 
     pokeButtons(tip, now);
     // la palanca tiene prioridad: si la tienes agarrada, esa mano no hace otra cosa
-    if (leverUpdate(h, h.pinching || fist, palm || pinchPt)) { releaseDrag(h); limitRings[hi].visible = false; return; }
+    if (leverUpdate(h, h.pinching || fist, wideOpen, [knuckle, palm, pinchPt, tip])) { releaseDrag(h); limitRings[hi].visible = false; return; }
     if (palmUpdate(h, hi, open, palm, dt)) return;
     if (state === 'aim') pokePilots(tip);
     if (state === 'aim') slingUpdate(h, h.pinching, pinchPt);
