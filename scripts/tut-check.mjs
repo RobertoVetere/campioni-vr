@@ -1,4 +1,4 @@
-// Tutorial en escritorio: pasos con eventos simulados, capturas del panel y la mano fantasma.
+// Tutorial de 3 pasos: no avanza con el gesto equivocado; termina con disparo, palma y empuñadura.
 import puppeteer from 'puppeteer-core';
 import { spawn } from 'child_process';
 const srv = spawn('npx', ['vite', 'preview', '--port', '4187', '--strictPort'], { cwd: new URL('..', import.meta.url).pathname });
@@ -13,31 +13,21 @@ await new Promise((r) => setTimeout(r, 1500));
 await p.evaluate(() => { document.getElementById('ui').style.display = 'none'; window.__campioni.startTutorial(); });
 await new Promise((r) => setTimeout(r, 1500));
 await p.screenshot({ path: '/tmp/claude-0/sp/tut-1.png' });
-const steps = await p.evaluate(async () => {
-  const g = window.__campioni, out = [];
+const out = await p.evaluate(async () => {
+  const g = window.__campioni, o = [];
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  g.tutEvent('shot'); out.push('evento equivocado -> paso ' + (g.tut.step + 1)); // no debe avanzar
-  const c = g.world.bodies.find((x) => x.team === 0 && x.kind === 'cap' && x !== g.selected);
-  g.select(c); out.push('tras elegir -> paso ' + (g.tut.step + 1));
-  g.tutEvent('drag'); out.push('tras arrastrar -> paso ' + (g.tut.step + 1));
-  g.tutEvent('shot_high'); out.push('evento fuera de orden -> paso ' + (g.tut.step + 1));
-  return out;
-});
-await new Promise((r) => setTimeout(r, 1500));
-await p.screenshot({ path: '/tmp/claude-0/sp/tut-3.png' });
-const end = await p.evaluate(async () => {
-  const g = window.__campioni;
-  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const sel = g.selected; g.fire(g.world.bodies.indexOf(sel), 0, -0.6, true); // tiro raso
+  g.tutEvent('lever'); o.push('evento equivocado -> paso ' + (g.tut.step + 1));
+  const c = g.world.bodies.find((x) => x.team === 0 && x.kind === 'cap');
+  g.select(c);
+  g.fire(g.world.bodies.indexOf(c), 0, -0.8, true); o.push('tras disparar -> paso ' + (g.tut.step + 1));
   await wait(2500);
-  g.tutEvent('shot_high');
+  g.tutEvent('drag'); o.push('tras mover -> paso ' + (g.tut.step + 1));
   g.tutEvent('lever');
-  g.tutEvent('lever_fwd');
-  const fin = g.tut && g.tut.fin > 0;
-  await wait(4000);
-  return { fin, modo: g.mode, estado: g.state, hecho: g.progress.tutorialDone };
+  const fin = !!(g.tut && g.tut.fin);
+  await wait(3500);
+  o.push(JSON.stringify({ fin, modo: g.mode, estado: g.state }));
+  return o;
 });
-console.log(steps.join('\n'));
-console.log(JSON.stringify(end));
+console.log(out.join('\n'));
 console.log('ERRORES:', errs.length ? errs.join('\n') : 'ninguno');
 await b.close(); srv.kill(); process.exit(0);

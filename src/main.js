@@ -233,8 +233,8 @@ function rebuildBodies() {
       reach.rotation.x = -Math.PI / 2; reach.position.y = 0.0007;
       m.add(reach);
       m.userData.reach = reach;
-      if (b.team === 0 && !b.kin) {
-        // piloto: palito fino + bombilla que brilla
+      if (false) {
+        // (pilotos retirados: distraían)
         const pilot = new THREE.Group();
         const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.0007, 0.0007, 0.032, 6), new THREE.MeshBasicMaterial({ color: 0xcfd8e3, toneMapped: false }));
         stem.position.y = 0.016 + (m.userData.h || 0.0065);
@@ -453,7 +453,6 @@ const PAGES = {
   controles: {
     title: () => t('menu.controlsT'),
     items: () => [
-      [t('menu.hand', { v: t(settings.shootHand === 'right' ? 'hand.right' : 'hand.left') }), () => { settings.shootHand = settings.shootHand === 'right' ? 'left' : 'right'; saveSettings(); }],
       [t('menu.finger', { v: t(`finger.${settings.finger}`) }), () => { settings.finger = cycle(['suave', 'normal', 'fuerte'], settings.finger); saveSettings(); }],
       [t('menu.keeper', { v: t(settings.keeper === 'auto' ? 'keeper.auto' : 'keeper.manual') }), () => { settings.keeper = settings.keeper === 'auto' ? 'manual' : 'auto'; applyKeeperMode(); saveSettings(); }],
       [t('menu.calib'), () => startCalib(), '#2f6f8f'],
@@ -895,7 +894,7 @@ function nextTouch() {
     state = 'aim';
     if (!selected || selected.team !== 0) autoSelect();
     const hint = t(settings.shootHand === 'right' ? 'hint.r' : 'hint.l');
-    say(touchesLeft > 1 ? hint : t('shootNow', { x: lastFlick || hint }));
+    say(touchesLeft > 1 ? t('hint.all') : t('shootNow', { x: lastFlick || t('hint.all') }));
   } else {
     // el rival juega rápido; mientras piensa puedes colocar tu defensa con la palma
     state = 'cpu'; timer = 0.35; cpuPrep = false; cpuGen = null; cpuShot = null;
@@ -904,7 +903,11 @@ function nextTouch() {
   drawBoard();
 }
 
+// Tiro raso o por arriba según la fuerza: un tiro flojo va raso; uno fuerte se levanta un poco
+// (salta una chapa) y uno a tope puede volar por encima del larguero.
+function loftFor(v) { return Math.max(0, Math.min(1, (v - 1.6) / 1.0)) * 0.36; }
 function fire(b, vx, vz, exact = false) {
+  if (!b.flipped && !b.aimAssist) b.loft = Math.max(b.loft || 0, loftFor(Math.hypot(vx, vz)));
   log.ev('fire', { team: b.team, cap: b.num, v: Math.hypot(vx, vz), vx, vz, loft: b.loft || 0, state });
   for (const holder of [...hands, ...pads, mouse]) holder.sling = null;
   if (!exact && b.team === 0 && !b.aimAssist) {
@@ -1252,11 +1255,7 @@ function tryFlick(p, vel, prev, capH = 0.06, vy = 0) {
   info.vy = vy * k;
   if (Math.abs(vy * k) > s * 0.8) return flickReject('vertical', info); // el dedo baja/sube: no es un toque
   if (freeKick && ((turn === 0 && vel.vz > 0) || (turn === 1 && vel.vz < 0))) return flickReject('hacia_atras', info);
-  // la elegida sale con cualquier toque; otra chapa tuya, con un toque claro (y pasa a ser la elegida)
-  if (b !== selected) {
-    if (s < FLICK_MIN * 1.6) return flickReject('no_elegida_y_flojo', info);
-    select(b, 'flick');
-  }
+  if (b !== selected) select(b, 'flick');
   // el dedo tiene que ir hacia la chapa (no alejarse de ella)
   if ((b.x - vel.old.x) * vel.vx + (b.z - vel.old.z) * vel.vz <= 0) return flickReject('se_aleja', info);
   // dirección: mezcla de hacia dónde va el dedo y la línea dedo→centro de la chapa (por dónde golpea)
@@ -1286,7 +1285,7 @@ function slingUpdate(holder, pinchOn, p) {
   if (!holder.sling && pinchOn && p && p.y < 0.06) {
     const b = myCapNear(p.x, p.z, 0.02);
     const now = performance.now();
-    if (b && (b === selected || holder === mouse || !selected)) {
+    if (b) {
       const d0 = holder.dwell;
       if (!d0 || d0.b !== b || Math.hypot(p.x - d0.x, p.z - d0.z) > 0.012) holder.dwell = { b, x: p.x, z: p.z, t: now };
       else if (now - d0.t > 150 || holder === mouse) {
@@ -1306,8 +1305,7 @@ function slingUpdate(holder, pinchOn, p) {
       holder.sling.vx = dx * SLING_GAIN * k;
       holder.sling.vz = dz * SLING_GAIN * k;
       holder.sling.pull = Math.hypot(dx, dz) * k;
-      // subir la mano mientras estiras = tiro por arriba (0 raso, 1 muy elevado)
-      holder.sling.loft = Math.max(0, Math.min(1, (p.y - holder.sling.y0) / 0.07));
+      holder.sling.loft = loftFor(Math.hypot(holder.sling.vx, holder.sling.vz));
       showAim(b, holder.sling.vx, holder.sling.vz, holder.sling.loft);
     }
     if (!pinchOn) {
@@ -1315,7 +1313,7 @@ function slingUpdate(holder, pinchOn, p) {
       holder.sling = null;
       aim.visible = false;
       log.ev('sling_end', { cap: s.b.num, pull: s.pull || 0, loft: s.loft || 0, fired: (s.pull || 0) > 0.012 && state === 'aim' });
-      if (s.pull > 0.012 && state === 'aim') { s.b.loft = s.loft || 0; fire(s.b, s.vx, s.vz); }
+      if (s.pull > 0.012 && state === 'aim') fire(s.b, s.vx, s.vz);
     }
   }
 }
@@ -1455,12 +1453,9 @@ function finishCalib(tableY) {
 const ghost = createGhostHand();
 root.add(ghost.group);
 const TUT = [
-  { key: 'tut1', side: 'left', pose: 'point', done: 'select' },
-  { key: 'tut2', side: 'left', pose: 'flat', done: 'drag' },
-  { key: 'tut3', side: 'right', pose: 'point', done: 'shot_low' },
-  { key: 'tut5', side: 'right', pose: 'pinch', done: 'shot_high' },
-  { key: 'tut4', side: 'right', pose: 'pinch', done: 'lever' },
-  { key: 'tut6', side: 'right', pose: 'pinch', done: 'lever_fwd' },
+  { key: 'tutA', side: 'right', pose: 'pinch', done: 'shot' },
+  { key: 'tutB', side: 'left', pose: 'flat', done: 'drag' },
+  { key: 'tutC', side: 'right', pose: 'pinch', done: 'lever' },
 ];
 const TUT_N = TUT.length;
 let tut = null;
@@ -1552,6 +1547,11 @@ function tutorialUpdate(dt) {
   } else if (st.done === 'drag') {
     const c = selected || world.bodies.find((b) => b.team === 0 && b.kind === 'cap');
     g.position.set(c.x + Math.sin(tt * 2) * 0.03, 0.022, c.z + 0.025);
+  } else if (st.done === 'shot') {
+    // pellizca sobre la chapa, tira hacia atrás y suelta
+    const c = selected || world.bodies.find((b) => b.team === 0 && b.kind === 'cap');
+    const ph = (tt % 1.8) / 1.8, k = Math.min(1, ph / 0.7);
+    g.position.set(c.x, 0.025, c.z + 0.01 + k * 0.08);
   } else if (st.done === 'shot_high') {
     // pellizca sobre la chapa, tira hacia atrás SUBIENDO la mano y suelta
     const c = selected || world.bodies.find((b) => b.team === 0 && b.kind === 'cap');
@@ -1737,12 +1737,9 @@ function updateXRInput(now, dt) {
     const released = !h.pinching && pd > 0.04;
     const handCenter = jointLocal(h.hand, 'middle-finger-metacarpal', new THREE.Vector3());
     if (leverUpdate(h, grabbing, released, [handCenter, knuckle, palm, pinchPt])) { releaseDrag(h); limitRings[hi].visible = false; return; }
-    // mano que mueve: palma para arrastrar, dedo para elegir (nunca dispara)
-    if (isMover(h)) {
-      if (palmUpdate(h, hi, open, h.pinching || curl.curled >= 2, palm, dt)) return;
-      if (state === 'aim') { pokePilots(tip); selectByTouch(tip); }
-    }
-    if (!isShooter(h)) { pushHist(h.hist['index-finger-tip'], now, tip); return; }
+    // Gestos (pocos y los mismos para las dos manos, como recomienda Meta):
+    //  palma abierta = empujar/mover chapas · pellizcar y tirar = disparar · toque de uña = disparar
+    if (palmUpdate(h, hi, open, h.pinching || curl.curled >= 2, palm, dt)) return;
     shooterTips.push(tip.clone());
     if (state === 'aim') slingUpdate(h, h.pinching, pinchPt);
 
@@ -1806,9 +1803,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   if (state === 'aim') {
     const pt = pointerTable(e);
     const b = pt && myCapNear(pt.x, pt.z, 0.006);
-    // con el ratón: primer clic elige la chapa, el siguiente arrastra para tirar
-    if (b && b !== selected) { select(b); mouse.down = false; return; }
-    if (b === selected) { mouse.wasPinch = false; mouse.dwell = null; slingUpdate(mouse, true, pt); }
+    if (b) { select(b, 'mouse'); mouse.wasPinch = false; mouse.dwell = null; slingUpdate(mouse, true, pt); }
   }
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
@@ -1977,10 +1972,15 @@ renderer.setAnimationLoop((t) => {
     const mine = state === 'aim' && b.team === 0 && (!lockedCap || b === lockedCap);
     const palmOn = hands.some((h) => h.drag === b || h.hover === b);
     if (ud.glow) {
-      ud.glow.material.opacity = palmOn ? 0.95 : mine ? (b === selected ? 0.95 : pulse * 0.6) : 0;
-      ud.glow.material.color.set(palmOn ? 0x6ec8ff : b === selected ? 0xffe066 : 0x8fffb0);
+      // la elegida brilla con el color de tu equipo; al llevarla con la palma, en blanco
+      const sel = mine && b === selected;
+      ud.glow.material.opacity = palmOn ? 0.9 : sel ? 0.75 + 0.2 * Math.sin(t / 180) : 0;
+      ud.glow.material.color.set(palmOn ? 0xffffff : 0x4f9bff);
     }
-    if (ud.reach) ud.reach.material.opacity = mine ? (b === selected ? 0.55 : 0.18) : (world.owner === b ? 0.35 : 0);
+    if (ud.reach) {
+      ud.reach.material.opacity = mine ? (b === selected ? 0.6 : 0.22) : (world.owner === b ? 0.35 : 0);
+      ud.reach.material.color.set(mine ? 0x9cc4ff : 0xffffff);
+    }
     if (ud.pilot) {
       ud.pilot.group.visible = mine && !b.flipped;
       const sel = b === selected;
