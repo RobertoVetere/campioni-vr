@@ -1,0 +1,30 @@
+{
+  "name": "campioni-vr",
+  "version": "1.0.0",
+  "description": "Calcio con le chapas — fútbol de chapas en realidad mixta, con las manos",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test test/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RobertoVetere/campioni-vr.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/RobertoVetere/campioni-vr/issues"
+  },
+  "homepage": "https://github.com/RobertoVetere/campioni-vr#readme",
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.16.0",
+    "vite": "^8.3.6"
+  },
+  "private": true,
+  "type": "module"
+}
