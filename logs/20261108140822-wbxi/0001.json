@@ -1,0 +1,1 @@
+{"session":"20261108140822-wbxi","seq":1,"commit":"b56208c","meta":{},"events":[{"t":1416557,"e":"xr_start","mode":"immersive-vr"},{"t":1416607,"e":"state","from":"menu","to":"calib","mode":"match","turn":0,"touches":2},{"t":1416668,"e":"s","st":"calib","ball":[0,0],"tableY":0.483,"zoom":1,"kx":0,"kz":0.42}]}
